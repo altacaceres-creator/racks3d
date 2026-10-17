@@ -1,0 +1,6 @@
+# Copy this file to tools/blocklist.txt (ignored by git) and list, one per line,
+# every word that must never appear in the public repository: your organisation,
+# sites, buildings, cities, people, providers, real hostnames, equipment brands
+# and models, circuit ids... Matching is case-insensitive.
+your-organisation
+your-site-name

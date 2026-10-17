@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>racks3d · data hall digital twin</title>
+<meta name="description" content="Static 3D digital twin of a data hall: racks, patch panels, star centers, trunks and cables. Fictitious sample data.">
+<link rel="stylesheet" href="css/racks3d.css">
+</head>
+<body>
+<div id="stage"></div>
+<div id="labels"></div>
+
+<header id="topbar" class="glass">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div><b>racks3d</b><small id="dataset">Sample data hall · fictitious</small></div>
+  </div>
+  <div class="seg" id="levels" role="group" aria-label="Level of detail">
+    <button data-level="room" class="on">Room</button>
+    <button data-level="trunks">Trunks</button>
+    <button data-level="all">All</button>
+  </div>
+  <nav id="views" class="tools">
+    <button data-act="racks">Racks</button>
+    <span id="rowButtons"></span>
+    <button data-act="aisle">Aisles</button>
+    <button data-act="walk">Walk</button>
+    <button data-act="tour">Rack tour</button>
+    <button data-act="occupancy">Occupancy</button>
+    <button data-act="shopping">Shopping</button>
+    <button data-act="notes">Notes <span id="notesCount" class="pill warn"></span></button>
+  </nav>
+  <div id="search">
+    <input id="q" type="search" placeholder="Search device, rack, panel (R1-04 P2)…" autocomplete="off" spellcheck="false" aria-label="Search">
+    <ul id="results" hidden></ul>
+  </div>
+</header>
+
+<aside id="layers" class="glass">
+  <button id="layersToggle" class="panel-head" aria-expanded="true">Layers <span class="chev"></span></button>
+  <div id="layerList"></div>
+</aside>
+
+<aside id="elev" class="glass" hidden></aside>
+<aside id="card" class="glass" hidden></aside>
+<div id="modebar" class="glass" hidden></div>
+<div id="placard" class="glass" hidden></div>
+<div id="tooltip" hidden></div>
+<div id="hint">Click a rack to open it · double-click an item to inspect · <kbd>Esc</kbd> goes back</div>
+
+<div id="modal" hidden>
+  <div class="glass modal-body" role="dialog" aria-modal="true">
+    <button class="close" data-close aria-label="Close">×</button>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<div id="studio" hidden>
+  <div id="studioLabels"></div>
+  <div class="studio-bar glass">
+    <div><span class="badge" id="studioBadge"></span> <b id="studioTitle"></b></div>
+    <div class="seg" id="studioViews">
+      <button data-view="front" class="on">Front</button>
+      <button data-view="iso">Isometric</button>
+      <button data-view="rear">Rear</button>
+      <button data-view="top">Top</button>
+    </div>
+    <button class="close" id="studioClose" aria-label="Close">×</button>
+  </div>
+  <div class="studio-hint">Hover a port to highlight it · click to trace its cable · <kbd>Esc</kbd> closes</div>
+</div>
+
+<script src="js/vendor/three.min.js"></script>
+<script src="js/vendor/OrbitControls.js"></script>
+<script src="js/vendor/CSS2DRenderer.js"></script>
+<script src="js/vendor/RoomEnvironment.js"></script>
+<script src="js/vendor/BufferGeometryUtils.js"></script>
+<script src="data/sample-data.js"></script>
+<script>
+  // Optional private data, never committed: open index.html?data=private
+  if (/[?&]data=private\b/.test(location.search)) document.write('<script src="data/private-data.js"><\/script>');
+</script>
+<script src="js/racks3d.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# Real data never goes to the public repo
+data/private-*.js
+private/
+tools/blocklist.txt
+*.csv
+.DS_Store
+__pycache__/
