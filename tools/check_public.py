@@ -9,7 +9,8 @@ when inside a git repository, otherwise every file) and fails when it finds:
   * MAC addresses
   * strings that look like serial numbers
   * words from tools/blocklist.txt (one per line, case-insensitive, NOT versioned)
-  * image files (no photos or downloaded pictures in the public repo)
+  * image files (no photos or downloaded pictures in the public repo), except PNG
+    screenshots of this app itself in docs/screenshots/, taken with the sample data
   * private data files that are tracked by git (data/private-*.js, private/)
 
 Third-party vendor code (js/vendor/) is only checked against the blocklist.
@@ -29,6 +30,7 @@ ALLOWED_IPS = {"0.0.0.0", "127.0.0.1"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".svg", ".ico", ".heic", ".avif"}
 SKIP_PATTERNS_UNDER = ("js/vendor/",)
 SKIP_FILES = {"tools/blocklist.txt", "tools/check_public.py"}
+SCREENSHOTS = "docs/screenshots/"
 
 RE_IP = re.compile(r"(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d.])")
 RE_MAC = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b|\b(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}\b")
@@ -79,8 +81,10 @@ def main():
         path = os.path.join(ROOT, rel)
         if not os.path.isfile(path):
             continue
-        if os.path.splitext(rel)[1].lower() in IMAGE_EXT:
-            hit(rel, "-", "IMAGE FILE", "only code-drawn faces are allowed in the public repo")
+        ext = os.path.splitext(rel)[1].lower()
+        if ext in IMAGE_EXT:
+            if not (rel.startswith(SCREENSHOTS) and ext == ".png"):
+                hit(rel, "-", "IMAGE FILE", "only code-drawn faces are allowed (and PNG screenshots of the app in %s)" % SCREENSHOTS)
             continue
         try:
             with open(path, encoding="utf-8") as fh:

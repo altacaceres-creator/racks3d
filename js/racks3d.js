@@ -11,6 +11,8 @@
     return;
   }
 
+  // the data as loaded, before the view adds its own fields to it: what Import exports
+  const RAW = JSON.parse(JSON.stringify(DATA));
   const V3 = THREE.Vector3;
   const v = (x, y, z) => new V3(x, y, z);
   const $ = (s, el) => (el || document).querySelector(s);
@@ -51,6 +53,21 @@
   const KIND_NAME = { structured: 'Structured', mgmt: 'Management', direct: 'Direct (no star center)', active: 'Active cable (fixed length)', pdu: 'PDU management', door: 'Door / camera', exit: 'Provider-room exit' };
   const MEDIUM_NAME = { copper: 'Copper', mm: 'MM fiber', sm: 'SM fiber' };
   const mkey = m => (m === 'mm' || m === 'sm') ? m : 'cu';
+
+  // power, heat, validation and the fit search live in js/plan.js (no 3D, tested under node)
+  const PLAN = window.Racks3dPlan;
+  const power = r => PLAN.rackPower(r, DATA);
+  const kw = w => (w / 1000).toFixed(w < 10000 ? 2 : 1) + ' kW';
+  const HEAT = [[22, '#2f9bff'], [30, '#3ddc84'], [36, '#ffd23f'], [42, '#ff8a1f'], [48, '#ff4d5e']];
+  function heatColor(t) {
+    const c = new THREE.Color(HEAT[0][1]);
+    for (let i = 1; i < HEAT.length; i++) {
+      if (t <= HEAT[i][0]) return c.set(HEAT[i - 1][1]).lerp(new THREE.Color(HEAT[i][1]), Math.max(0, (t - HEAT[i - 1][0]) / (HEAT[i][0] - HEAT[i - 1][0])));
+    }
+    return c.set(HEAT[HEAT.length - 1][1]);
+  }
+  const POWER_CLS = { ok: 'free', high: 'new', over: 'pending' };
+  const powerSpan = p => '<span style="color:var(--' + ({ ok: 'text', high: 'new', over: 'pending' })[p.status] + ')">' + kw(p.w) + '</span> of ' + kw(p.budget) + ' (' + Math.round(p.util * 100) + ' %)';
 
   // ------------------------------------------------------------------ data model
   const racks = DATA.racks;
@@ -1027,6 +1044,7 @@
     { id: 'trays', label: 'Cable trays', group: 'Room', color: '#8a91b4' },
     { id: 'doors', label: 'Rack doors', group: 'Room', color: '#4b4f78' },
     { id: 'labels', label: 'Rack labels', group: 'Room', color: '#eceaf4' },
+    { id: 'heat', label: 'Heat map (exhaust)', group: 'Room', color: '#ff8a1f' },
     { id: 'trunk-cu', label: 'Copper trunks', group: 'Trunks', color: '#3a6df0' },
     { id: 'trunk-mm', label: 'MM fiber trunks', group: 'Trunks', color: '#7ac81e' },
     { id: 'trunk-sm', label: 'SM fiber trunks', group: 'Trunks', color: '#e8b820' },
@@ -1089,7 +1107,23 @@
     layerCount.trays = rows.length * 2 + CROSS.length * 2;
     layerCount.doors = racks.length * 2;
     layerCount.labels = racks.length;
+    layerCount.heat = racks.length;
   })();
+
+  // Heat map: a tile on the floor behind each rack, in the hot aisle, coloured by its
+  // estimated exhaust temperature, with the temperature written on it.
+  const heatGroup = new THREE.Group();
+  scene.add(heatGroup);
+  racks.forEach(r => {
+    const p = power(r), deep = Math.min(0.8, ROOM.hotAisle - 0.1);
+    const tile = new THREE.Mesh(new THREE.PlaneGeometry(r.w - 0.04, deep),
+      new THREE.MeshBasicMaterial({ color: heatColor(p.exhaustC), transparent: true, opacity: 0.55, depthWrite: false }));
+    tile.rotation.x = -Math.PI / 2;
+    tile.position.copy(toW(r, v(0, 0.006, -r.d - deep / 2 - 0.02)));
+    const lab = css2d(Math.round(p.exhaustC) + ' °C<small>' + kw(p.w) + '</small>', 'heat-label ' + p.status);
+    lab.position.copy(toW(r, v(0, 0.35, -r.d - deep / 2)));
+    heatGroup.add(tile, lab);
+  });
 
   // ------------------------------------------------------------------ helpers for text
   function fmtRange(it) { return it._u === 1 ? 'U' + it._top : 'U' + it._top + '–U' + it._bottom; }
@@ -1159,6 +1193,7 @@
   const stack = [];
   const walk = { active: false, poses: [], idx: 0, t: 0, phase: 'dwell', paused: false, speed: 1, rack: null };
   const tour = { list: [], i: 0, t: 0, paused: false, dwell: 6 };
+  const fit = { need: null, results: null, byRack: null };
 
   function boxPlanes(min, max) {
     return [
@@ -1189,11 +1224,15 @@
       o.label.userData.show = L.has('labels') && !inRack && !isRow && ((m !== 'walk' && m !== 'aisle') || focus);
       if (o.overlay) o.overlay.visible = m === 'rack' && r === state.rack;
       if (o.gaps) o.gaps.visible = (inRack && r === state.rack) || focus;
-      o.bodyMat.emissive.set(focus || state.hoverRack === r ? 0x1e1ec8 : 0x000000);
-      o.bodyMat.emissiveIntensity = focus ? 0.9 : 0.6;
+      glow(r, focus);
+      if (o.ghost) {
+        o.ghost.visible = !!fit.results && (inRack ? r === state.rack : true);
+        o.ghost.userData.label.userData.show = inRack;    // in the room the boxes say enough; labels would pile up
+      }
     });
     doorMat.opacity = (m === 'aisle' || m === 'walk') ? 0.38 : 0.9;
     wallsGroup.visible = L.has('walls') && !inRack && !isRow;
+    heatGroup.visible = L.has('heat') && !inRack && !isRow;
     traysGroup.visible = L.has('trays') && !inRack && !isRow;
     const clip = inRack && state.rack ? rackBox(state.rack) : isRow && state.row ? rowBox(state.row) : null;
     CABLE_LAYERS.forEach(id => {
@@ -1623,7 +1662,8 @@
     p.innerHTML = '<span class="badge mute">' + esc(kicker) + '</span> ' + (r.star.length ? '<span class="badge">Star center ' + r.star.map(x => x === 'copper' ? 'Cu' : x.toUpperCase()).join(' + ') + '</span>' : '') +
       '<h3>' + esc(r.id) + ' · ' + esc(r.name) + '</h3>' +
       '<div class="kv"><div><b>' + s.uUsed + '</b><small>U used</small></div><div><b style="color:var(--free)">' + s.uFree + '</b><small>U free</small></div>' +
-      '<div><b>' + s.devices + '</b><small>Devices</small></div><div><b>' + s.cables + '</b><small>Cables</small></div></div>' +
+      '<div><b>' + s.devices + '</b><small>Devices</small></div><div><b>' + s.cables + '</b><small>Cables</small></div>' +
+      '<div><b style="color:var(--' + ({ ok: 'text', high: 'new', over: 'pending' })[power(r).status] + ')">' + kw(power(r).w) + '</b><small>Power</small></div></div>' +
       (devs.length ? '<div style="color:var(--muted);font-size:12px">' + devs.slice(0, 8).map(d => esc(d.label)).join(' · ') + (devs.length > 8 ? ' …' : '') + '</div>' : '') +
       (news.length ? '<ul>' + news.map(it => '<li style="color:var(--new)">To order: ' + esc(itemName(it)) + ' (' + fmtRange(it) + ')</li>').join('') + '</ul>' : '');
     p.hidden = false;
@@ -1668,14 +1708,18 @@
     showItemCard(it);
     invalidate();
   }
+  // a rack lights blue when focused or hovered, else green or amber while a fit search is shown
+  const FIT_GLOW = { fits: 0x0d8a4a, add: 0x8a5a00 };
+  function glow(r, focus) {
+    const o = rackObjs[r.id], f = fit.byRack && fit.byRack[r.id];
+    const c = focus || state.hoverRack === r ? 0x1e1ec8 : f && FIT_GLOW[f.status] && !inRackMode() ? FIT_GLOW[f.status] : 0x000000;
+    o.bodyMat.emissive.set(c);
+    o.bodyMat.emissiveIntensity = focus ? 0.9 : 0.6;
+  }
   function setHover(r) {
     if (state.hoverRack === r) return;
     state.hoverRack = r;
-    racks.forEach(x => {
-      const o = rackObjs[x.id], focus = state.mode === 'walk' && walk.rack === x;
-      o.bodyMat.emissive.set(focus || r === x ? 0x1e1ec8 : 0x000000);
-      o.bodyMat.emissiveIntensity = focus ? 0.9 : 0.6;
-    });
+    racks.forEach(x => glow(x, state.mode === 'walk' && walk.rack === x));
     invalidate();
   }
 
@@ -1723,15 +1767,20 @@
     if (e.target.closest('[data-close-card]')) { hideCard(); clearTrace(); return; }
     const ca = e.target.closest('[data-ca]');
     if (ca) { const a = cardActions[+ca.dataset.ca]; if (a) a[1](); return; }
+    const fr = e.target.closest('[data-fit]');
+    if (fr) { openRack(rackById[fr.dataset.fit]); return; }
     const li = e.target.closest('[data-c]');
     if (li) { const c = cables.find(x => x.id === li.dataset.c); if (c) traceCable(c); }
   });
-  const SOURCE = (DATA.meta && DATA.meta.private) ? 'Source: private data file (not published).' : 'Source: data/sample-data.js — fictitious sample data.';
+  const SOURCE = (DATA.meta && DATA.meta.private) ? 'Source: private data file (not published).'
+    : (DATA.meta && DATA.meta.imported) ? 'Source: a file imported in this browser (not published).'
+    : 'Source: data/sample-data.js — fictitious sample data.';
 
   function showRackCard(r) {
-    const s = rackStats(r), news = r.items.filter(isItemNew).length;
+    const s = rackStats(r), news = r.items.filter(isItemNew).length, pw = power(r);
     const acts = [];
     if (state.mode !== 'rack') acts.push(['Open rack', () => openRack(r)]);
+    if (fit.results) acts.push(['Back to the fit results', showFitCard]);
     acts.push(['Row ' + r._row.key + ' elevation', () => openRow(r._row, 'front')]);
     showCard({
       badge: r.star.length ? 'Star center' : 'Rack', title: r.id + ' · ' + r.name,
@@ -1744,6 +1793,10 @@
         ['Patching', s.panels + ' UTP panels · ' + s.trays + ' fiber trays'],
         ['Ports Cu / MM / SM', s.copper.used + '/' + s.copper.inst + ' · ' + s.mm.used + '/' + s.mm.inst + ' · ' + s.sm.used + '/' + s.sm.inst],
         news ? ['New items', '<span style="color:var(--new)">' + news + ' to order</span>'] : null,
+        ['Power', powerSpan(pw)],
+        ['Feeds A / B', kw(pw.feedA) + ' / ' + kw(pw.feedB) + (pw.status === 'over' ? ' · <span style="color:var(--pending)">one feed alone cannot carry it</span>' : '')],
+        ['Exhaust (est.)', Math.round(pw.exhaustC) + ' °C · inlet ' + pw.inletC + ' °C'],
+        fit.byRack ? ['Fit: ' + esc(fitName(fit.shown)), fitText(fit.byRack[r.id])] : null,
       ],
       cables: cablesOfRack(r), note: SOURCE, actions: acts,
     });
@@ -1768,6 +1821,7 @@
         ['Size', '482.6 mm (19") × ' + (it._u * 44.45).toFixed(2) + ' mm × ' + Math.round(g.depth * 1000) + ' mm deep'],
         it.kind === 'utp' ? ['Role', esc(ROLE_NAME[it.role] || it.role)] : null,
         ports ? ['Ports', esc(ports)] : null,
+        it.kind === 'device' ? ['Power', PLAN.watts(it) + ' W' + (typeof it.watts === 'number' ? '' : ' (typical for a ' + esc((TYPE_NAME[it.type] || it.type).toLowerCase()) + ')')] : null,
         peer ? ['Trunk to', esc(shortRef(peer.peer))] : null,
         peers.length ? ['Trunks to', esc(peers.map(p => shortRef(p.peer)).join(', '))] : null,
         ['Status', isItemNew(it) ? '<span style="color:var(--new)">New — to order</span>' : 'Installed'],
@@ -2119,6 +2173,10 @@
     if (act.length) out.push({ sev: 'info', text: act.length + ' active cable(s) cannot pass through patch panels; they are laid in the tray with a fixed length.', sub: act.map(c => c.a.item + ' ↔ ' + c.b.item).join(' · ') });
     const pend = cables.filter(c => c.status === 'pending');
     if (pend.length) out.push({ sev: 'bad', text: pend.length + ' pending cable(s) without a confirmed port.', sub: pend.map(c => c.id + ' ' + cableSummary(c)).join(' · ') });
+    racks.forEach(r => {
+      const p = power(r);
+      if (p.status !== 'ok') out.push({ sev: p.status === 'over' ? 'bad' : 'warn', text: r.id + ' draws ' + kw(p.w) + ', ' + Math.round(p.util * 100) + ' % of its ' + kw(p.budget) + ' budget' + (p.status === 'over' ? ': one feed alone could not carry it.' : '.'), sub: 'Estimated exhaust ' + Math.round(p.exhaustC) + ' °C', go: () => openRack(r) });
+    });
     racks.forEach(r => { const s = rackStats(r); if (s.uFree < 4) out.push({ sev: 'warn', text: r.id + ' has only ' + s.uFree + 'U free.', sub: r.name, go: () => openRack(r) }); });
     const ext = DATA.externals || [];
     if (ext.length) out.push({ sev: 'info', text: ext.length + ' element(s) are outside the racks.', sub: ext.map(e => e.label || e.id).join(' · ') });
@@ -2180,6 +2238,208 @@
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       });
+  }
+  function showPower() {
+    const all = racks.map(r => ({ r, p: power(r) }));
+    const total = sum(all, x => x.p.w), budget = sum(all, x => x.p.budget);
+    const hot = all.reduce((a, x) => (x.p.exhaustC > a.p.exhaustC ? x : a), all[0]);
+    const high = all.filter(x => x.p.status !== 'ok').length;
+    const dot = t => '<i class="dot" style="background:#' + heatColor(t).getHexString() + '"></i>';
+    openModal('<h2>Power &amp; heat</h2><p class="sub">Load per rack against its budget, split over the A and B feeds, and the estimated exhaust temperature in the hot aisle. ' +
+      'Devices draw the typical watts of their type unless the data gives <code>watts</code>. Turn on the <b>Heat map</b> layer to see it on the floor.</p>' +
+      '<div class="kpis"><div class="kpi"><b>' + kw(total) + '</b><small>Total load · ' + Math.round(total / budget * 100) + ' % of ' + kw(budget) + '</small></div>' +
+      '<div class="kpi' + (high ? ' warn' : '') + '"><b>' + high + '</b><small>Racks above 80 % of budget</small></div>' +
+      '<div class="kpi"><b>' + Math.round(hot.p.exhaustC) + ' °C</b><small>Hottest exhaust · ' + esc(hot.r.id) + '</small></div>' +
+      '<div class="kpi"><b>' + powerOfData.inletC + ' °C</b><small>Cold-aisle inlet</small></div></div>' +
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Rack</th><th>Load / budget</th><th>Feed A</th><th>Feed B</th><th>Exhaust</th></tr></thead><tbody>' +
+      all.map(({ r, p }) => '<tr data-r="' + esc(r.id) + '" style="cursor:pointer"><td><b>' + esc(r.id) + '</b><br><small style="color:var(--muted)">' + esc(r.name) + '</small></td>' +
+        '<td><div class="bar-cell"><div class="bar"><span class="fill" style="width:' + Math.min(100, p.util * 100).toFixed(1) + '%;background:var(--' + ({ ok: 'accent', high: 'new', over: 'pending' })[p.status] + ')"></span><i class="mark" style="left:80%" title="80 %"></i></div><small>' + kw(p.w) + ' / ' + kw(p.budget) + '</small></div></td>' +
+        '<td>' + kw(p.feedA) + '</td><td>' + kw(p.feedB) + '</td><td>' + dot(p.exhaustC) + ' ' + Math.round(p.exhaustC) + ' °C</td></tr>').join('') +
+      '</tbody></table></div>' +
+      '<div class="legend"><span><i class="dot" style="background:var(--accent)"></i>Under 80 %</span><span><i class="dot" style="background:var(--new)"></i>80–100 %</span><span><i class="dot" style="background:var(--pending)"></i>Over budget: with 2N feeds, one feed alone could not carry the rack</span><span><i class="dot" style="background:#fff"></i>80 % mark</span></div>' +
+      '<p class="sub" style="margin-top:10px">The exhaust is an estimate, not a measurement: fans sized for the rack budget (' + powerOfData.cfmPerKw + ' CFM per kW), so ΔT = 3.16 × W ÷ CFM.</p>',
+      e => { const tr = e.target.closest('[data-r]'); if (tr) { closeModal(); openRack(rackById[tr.dataset.r]); } });
+  }
+  const powerOfData = Object.assign({}, PLAN.POWER_DEFAULTS, DATA.power || {});
+
+  // ------------------------------------------------------------------ where does it fit?
+  const FIT_PRESETS = [
+    ['server1', '1U server', { type: 'server', u: 1, copper: 3, fiber: 0, medium: 'mm' }],
+    ['server2', '2U server', { type: 'server', u: 2, copper: 3, fiber: 2, medium: 'mm' }],
+    ['storage', '2U storage array', { type: 'storage', u: 2, copper: 3, fiber: 4, medium: 'mm' }],
+    ['switch', 'Access switch', { type: 'switch', u: 1, copper: 1, fiber: 2, medium: 'mm' }],
+    ['router', 'Edge router', { type: 'router', u: 2, copper: 2, fiber: 4, medium: 'sm' }],
+    ['chassis', '6U blade chassis', { type: 'chassis', u: 6, copper: 4, fiber: 8, medium: 'mm' }],
+    ['custom', 'Something else', { type: 'appliance', u: 1, copper: 1, fiber: 0, medium: 'mm' }],
+  ];
+  const fitName = n => n.u + 'U ' + (TYPE_NAME[n.type] || n.type).toLowerCase() + ' · ' + n.watts + ' W';
+  const runText = (x, n) => x.run ? 'U' + x.run.top + (n.u > 1 ? '–U' + (x.run.top - n.u + 1) : '') : '—';
+  function fitText(x) {
+    if (!x) return '';
+    if (x.status === 'fits') return '<span style="color:var(--free)">Fits</span> at ' + runText(x, fit.shown);
+    if (x.status === 'add') return '<span style="color:var(--new)">Fits once you add</span> ' + esc(x.add.join(' + '));
+    return '<span style="color:var(--muted)">Does not fit:</span> ' + esc(x.why.join('; '));
+  }
+  function showFit() {
+    const n = fit.need || Object.assign({ preset: 'server2', watts: PLAN.watts({ kind: 'device', type: 'server', u: 2 }) }, FIT_PRESETS[1][2]);
+    const field = (k, label, html) => '<label class="field"><span>' + label + '</span>' + html + '</label>';
+    const numIn = (k, min, max) => '<input type="number" data-f="' + k + '" min="' + min + '" max="' + max + '" value="' + n[k] + '">';
+    openModal('<h2>Where does it fit?</h2><p class="sub">Describe the equipment and see which racks have a free run of U for it, patching ports for its cables and power to spare. ' +
+      'Ports count the free ports on each rack’s trunk panels and cassettes; when they run short, the panels or cassettes to add are listed.</p>' +
+      '<div class="fit-form">' +
+      field('preset', 'Equipment', '<select data-f="preset">' + FIT_PRESETS.map(p => '<option value="' + p[0] + '"' + (p[0] === n.preset ? ' selected' : '') + '>' + esc(p[1]) + '</option>').join('') + '</select>') +
+      field('type', 'Type', '<select data-f="type">' + PLAN.TYPES.map(t => '<option value="' + t + '"' + (t === n.type ? ' selected' : '') + '>' + esc(TYPE_NAME[t] || t) + '</option>').join('') + '</select>') +
+      field('u', 'Height (U)', numIn('u', 1, RACK_U)) +
+      field('copper', 'Copper ports to patch', numIn('copper', 0, 96)) +
+      field('fiber', 'Fiber ports to patch', numIn('fiber', 0, 48)) +
+      field('medium', 'Fiber', '<select data-f="medium"><option value="mm"' + (n.medium === 'mm' ? ' selected' : '') + '>Multimode</option><option value="sm"' + (n.medium === 'sm' ? ' selected' : '') + '>Single-mode</option></select>') +
+      field('watts', 'Power (W)', numIn('watts', 0, 20000)) +
+      '</div><div id="fitResults"></div>',
+      e => {
+        const tr = e.target.closest('[data-r]');
+        if (tr) { closeModal(); applyFit(); openRack(rackById[tr.dataset.r]); return; }
+        if (e.target.closest('[data-show]')) { closeModal(); applyFit(); if (state.mode !== 'room') goRoom(); showFitCard(); }
+      });
+    const form = $('.fit-form');
+    const read = () => {
+      const g = k => $('[data-f="' + k + '"]', form);
+      return { preset: g('preset').value, type: g('type').value, u: Math.max(1, Math.min(RACK_U, parseInt(g('u').value, 10) || 1)),
+        copper: Math.max(0, parseInt(g('copper').value, 10) || 0), fiber: Math.max(0, parseInt(g('fiber').value, 10) || 0),
+        medium: g('medium').value, watts: Math.max(0, parseInt(g('watts').value, 10) || 0) };
+    };
+    const render = () => {
+      fit.need = read();
+      const res = PLAN.findFit(DATA, fit.need), count = st => res.filter(x => x.status === st).length;
+      $('#fitResults').innerHTML = '<div class="kpis"><div class="kpi"><b style="color:var(--free)">' + count('fits') + '</b><small>Racks where it fits now</small></div>' +
+        '<div class="kpi warn"><b>' + count('add') + '</b><small>Fit once a panel or cassette is added</small></div>' +
+        '<div class="kpi"><b>' + count('no') + '</b><small>No room, ports or power</small></div></div>' +
+        '<div class="actions" style="margin-bottom:10px"><button class="btn primary" data-show>Show in 3D</button></div>' +
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Rack</th><th>Result</th><th>Free run</th><th>Power after</th></tr></thead><tbody>' +
+        res.map(x => '<tr data-r="' + esc(x.rack.id) + '" style="cursor:pointer"><td><b>' + esc(x.rack.id) + '</b><br><small style="color:var(--muted)">' + esc(x.rack.name) + '</small></td>' +
+          '<td>' + (x.status === 'fits' ? '<span class="badge free">Fits</span>' : x.status === 'add' ? '<span class="badge new">Add</span> ' + esc(x.add.join(' + ')) : '<span class="badge mute">No</span> <small style="color:var(--muted)">' + esc(x.why.join('; ')) + '</small>') + '</td>' +
+          '<td>' + runText(x, fit.need) + ' <small style="color:var(--muted)">(largest ' + x.largest + 'U)</small></td>' +
+          '<td>' + kw(x.powerAfter) + ' <small style="color:var(--muted)">of ' + kw(x.budget) + '</small></td></tr>').join('') + '</tbody></table></div>';
+      fit.preview = res;
+    };
+    form.addEventListener('input', e => {
+      const k = e.target.dataset.f;
+      if (k === 'preset') {
+        const p = FIT_PRESETS.find(q => q[0] === e.target.value)[2];
+        Object.keys(p).forEach(f => { $('[data-f="' + f + '"]', form).value = p[f]; });
+      }
+      if (k === 'preset' || k === 'type' || k === 'u') $('[data-f="watts"]', form).value = PLAN.watts({ kind: 'device', type: $('[data-f="type"]', form).value, u: parseInt($('[data-f="u"]', form).value, 10) || 1 });
+      render();
+    });
+    render();
+  }
+  // keep the last search on screen: racks glow, and each rack that can take it shows a ghost of it
+  function applyFit() {
+    clearFit();
+    fit.results = fit.preview;
+    fit.shown = Object.assign({}, fit.need);
+    fit.byRack = {};
+    fit.results.forEach(x => {
+      fit.byRack[x.rack.id] = x;
+      if (!x.run) return;
+      const r = x.rack, o = rackObjs[r.id], n = fit.shown;
+      const top = x.run.top, bottom = top - n.u + 1, yb = BASE + (bottom - 1) * U, h = n.u * U, depth = Math.min(DEPTH[n.type] || 0.5, r.d - 0.25);
+      const g = new THREE.Group();
+      const col = x.status === 'fits' ? C.free : x.status === 'add' ? C.new : C.muted;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(RAIL, h - 0.002, depth), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.28, depthWrite: false }));
+      box.position.set(0, yb + h / 2, FRONT_RAIL - depth / 2);
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color: col }));
+      edges.position.copy(box.position);
+      const lab = css2d('Proposed ' + esc(fitName(n)) + '<br>' + runText(x, n), 'ghost-label ' + x.status);
+      lab.position.set(0, yb + h / 2, FRONT_RAIL + 0.02);
+      g.add(box, edges, lab);
+      g.userData.label = lab;
+      o.group.add(g);
+      o.ghost = g;
+    });
+    applyVisibility();
+  }
+  function clearFit() {
+    racks.forEach(r => {
+      const o = rackObjs[r.id];
+      if (!o.ghost) return;
+      o.ghost.traverse(m => { if (m.geometry) m.geometry.dispose(); if (m.material) m.material.dispose(); });
+      o.group.remove(o.ghost);
+      o.ghost = null;
+    });
+    fit.results = fit.byRack = null;
+    applyVisibility();
+  }
+  function showFitCard() {
+    if (!fit.results) return;
+    const ok = fit.results.filter(x => x.status !== 'no');
+    showCard({
+      badge: 'Where does it fit?', title: fitName(fit.shown),
+      html: '<p style="color:var(--muted);margin:4px 0 8px">Green racks take it as they are, amber ones once a panel or cassette is added; star centers come last, as they are for patching. Open one to see the proposed position.</p>' +
+        '<ul class="cables">' + (ok.length ? ok.map(x => '<li data-fit="' + esc(x.rack.id) + '"><span class="dot" style="background:' + (x.status === 'fits' ? C.free : C.new) + '"></span><span>' + esc(x.rack.id) + ' · ' + esc(x.rack.name) + '</span><small>' + (x.status === 'fits' ? runText(x, fit.shown) : '+ ' + x.add.length + ' to add') + '</small></li>').join('') : '<li><span>No rack can take it.</span></li>') + '</ul>',
+      actions: [['Change the search', showFit], ['Clear', () => { clearFit(); hideCard(); }]],
+    });
+  }
+  // ------------------------------------------------------------------ import
+  function download(name, text, type) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: type + ';charset=utf-8' }));
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  // A file's text → { data, errors }. CSV is the inventory; JSON or a .js data file is the full model.
+  function readData(name, text) {
+    if (/\.csv$/i.test(name)) return PLAN.fromCsv(text, name);
+    try {
+      const json = text.replace(/^[\s\S]*?window\.DC_DATA\s*=\s*/, '').replace(/;\s*$/, '');
+      return { data: JSON.parse(json), errors: [] };
+    } catch (e) { return { data: null, errors: ['Not a CSV, or JSON in the racks3d format: ' + e.message] }; }
+  }
+  function showImport() {
+    const cur = window.Racks3dImport && window.Racks3dImport.load();
+    let pending = null;
+    openModal('<h2>Import your data hall</h2><p class="sub">Open an <b>inventory CSV</b> (racks and the equipment in them, one line per item) or a <b>JSON</b> file in the same format as <code>data/sample-data.js</code> (with cables and trunks). ' +
+      'The file is read here and kept in this browser only: nothing is uploaded.</p>' +
+      (cur ? '<p class="note-line">Showing <b>' + esc(cur.name) + '</b>, imported ' + esc(new Date(cur.at).toLocaleString()) + '. <button class="btn" data-k="sample">Back to the sample</button></p>' : '') +
+      '<label class="drop" id="drop"><input type="file" id="file" accept=".csv,.json,.js,text/csv,application/json" hidden><b>Drop a file here</b><small>or click to choose · .csv, .json</small></label>' +
+      '<div id="importResult"></div>' +
+      '<div class="actions"><button class="btn" data-k="template">Download the CSV of this hall</button><button class="btn" data-k="json">Download the JSON of this hall</button></div>' +
+      '<p class="sub" style="margin-top:10px">The CSV columns are <code>' + esc('rack, row, rack_name, width, depth, rack_kw, u_top, kind, label, type, u, ports, uplinks, uplink_medium, watts, role, cassettes, new') + '</code>. ' +
+      '<code>kind</code> is device, utp, lc or org; <code>u_top</code> is the U the item starts at; a line with no kind just declares an empty rack. The CSV of this hall is a ready-made example.</p>',
+      e => {
+        const k = e.target.closest('[data-k]');
+        if (!k) return;
+        if (k.dataset.k === 'template') download('racks3d-inventory.csv', '\uFEFF' + PLAN.toCsv(RAW), 'text/csv');
+        else if (k.dataset.k === 'json') download('racks3d-data.json', JSON.stringify(RAW, null, 1), 'application/json');
+        else if (k.dataset.k === 'sample') { window.Racks3dImport.clear(); location.reload(); }
+        else if (k.dataset.k === 'open' && pending) {
+          if (window.Racks3dImport.save(pending)) location.reload();
+          else $('#importResult').insertAdjacentHTML('beforeend', '<p class="note-line bad">This browser does not allow saving it (private window or blocked storage).</p>');
+        }
+      });
+    const drop = $('#drop'), file = $('#file');
+    const take = f => {
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => {
+        const { data, errors } = readData(f.name, String(rd.result));
+        const v = data ? PLAN.validate(data) : { errors: [], warnings: [] };
+        const all = errors.concat(v.errors);
+        const devices = data ? data.racks.reduce((n, r) => n + (r.items || []).filter(it => it && it.kind === 'device').length, 0) : 0;
+        pending = all.length ? null : { name: f.name, at: Date.now(), data };
+        const list = (xs, cls) => '<ul class="notes">' + xs.slice(0, 30).map(x => '<li class="' + cls + '"><span class="ico">!</span><div>' + esc(x) + '</div></li>').join('') + (xs.length > 30 ? '<li class="' + cls + '"><span class="ico">…</span><div>and ' + (xs.length - 30) + ' more</div></li>' : '') + '</ul>';
+        $('#importResult').innerHTML = '<h3>' + esc(f.name) + '</h3>' +
+          (data ? '<p class="sub">' + data.racks.length + ' racks · ' + devices + ' devices · ' + ((data.cables || []).length) + ' cables</p>' : '') +
+          (all.length ? '<p class="note-line bad">' + all.length + ' problem(s) to fix in the file before it can be opened:</p>' + list(all, 'bad')
+            : '<div class="actions" style="margin:0 0 10px"><button class="btn primary" data-k="open">Open it</button></div>') +
+          (v.warnings.length ? '<p class="note-line">' + v.warnings.length + ' warning(s), it opens anyway:</p>' + list(v.warnings, 'warn') : '');
+      };
+      rd.readAsText(f);
+    };
+    file.onchange = () => take(file.files[0]);
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+    drop.ondragleave = () => drop.classList.remove('over');
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files[0]); };
   }
   let notesCache = null;
   function showNotes() {
@@ -2302,6 +2562,9 @@
     else if (a === 'walk') { if (state.mode !== 'walk') { pushMode(); setMode('walk', { walkIdx: 0 }); } }
     else if (a === 'tour') startTour();
     else if (a === 'occupancy') showOccupancy();
+    else if (a === 'power') showPower();
+    else if (a === 'fit') showFit();
+    else if (a === 'import') showImport();
     else if (a === 'shopping') showShopping();
     else if (a === 'notes') showNotes();
   });
