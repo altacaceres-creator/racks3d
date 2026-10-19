@@ -128,7 +128,7 @@ kbd {
 .pill:empty { display: none; }
 .pill.warn { background: var(--new); color: #1a1300; font-weight: 700; }
 
-#search { position: relative; margin-left: auto; flex: 0 1 300px; min-width: 200px; }
+#search { position: relative; margin-left: auto; flex: 1 1 180px; max-width: 300px; min-width: 170px; }
 #q {
   width: 100%;
   padding: 7px 10px;
@@ -414,6 +414,12 @@ kbd {
 .heat-label small { display: block; font-size: 10px; font-weight: 400; color: var(--muted); }
 .heat-label.high { color: var(--new); }
 .heat-label.over { color: var(--pending); }
+.ghost-label {
+  font-size: 11px; font-weight: 700; text-align: center; white-space: nowrap; color: var(--free);
+  padding: 2px 6px; border-radius: 6px; background: rgba(10, 11, 26, .78); border: 1px solid currentColor;
+}
+.ghost-label.add { color: var(--new); }
+.ghost-label.no { color: var(--muted); }
 .wall-label { font-size: 11px; color: var(--muted); white-space: nowrap; text-shadow: 0 1px 2px #000; }
 .portal-label { font-size: 13px; font-weight: 700; color: var(--accent); white-space: nowrap; text-shadow: 0 0 8px rgba(0, 155, 255, .6); }
 .dim-label {
@@ -445,6 +451,14 @@ kbd {
 }
 .modal-body h2 { margin: 0 0 4px; font-size: 18px; }
 .modal-body .sub { color: var(--muted); margin: 0 0 14px; }
+.fit-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; margin-bottom: 14px; }
+.field { display: grid; gap: 4px; font-size: 11px; color: var(--muted); }
+.field input, .field select {
+  width: 100%; padding: 7px 9px; border-radius: 8px; font-size: 13px; color: var(--text);
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--border);
+}
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+.field select option { background: #15172c; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 14px; }
 .kpi { padding: 10px 12px; border-radius: 10px; background: var(--panel-raised); border: 1px solid var(--border); }
 .kpi b { display: block; font-size: 22px; }

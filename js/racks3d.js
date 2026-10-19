@@ -1191,6 +1191,7 @@
   const stack = [];
   const walk = { active: false, poses: [], idx: 0, t: 0, phase: 'dwell', paused: false, speed: 1, rack: null };
   const tour = { list: [], i: 0, t: 0, paused: false, dwell: 6 };
+  const fit = { need: null, results: null, byRack: null };
 
   function boxPlanes(min, max) {
     return [
@@ -1221,8 +1222,11 @@
       o.label.userData.show = L.has('labels') && !inRack && !isRow && ((m !== 'walk' && m !== 'aisle') || focus);
       if (o.overlay) o.overlay.visible = m === 'rack' && r === state.rack;
       if (o.gaps) o.gaps.visible = (inRack && r === state.rack) || focus;
-      o.bodyMat.emissive.set(focus || state.hoverRack === r ? 0x1e1ec8 : 0x000000);
-      o.bodyMat.emissiveIntensity = focus ? 0.9 : 0.6;
+      glow(r, focus);
+      if (o.ghost) {
+        o.ghost.visible = !!fit.results && (inRack ? r === state.rack : true);
+        o.ghost.userData.label.userData.show = inRack;    // in the room the boxes say enough; labels would pile up
+      }
     });
     doorMat.opacity = (m === 'aisle' || m === 'walk') ? 0.38 : 0.9;
     wallsGroup.visible = L.has('walls') && !inRack && !isRow;
@@ -1702,14 +1706,18 @@
     showItemCard(it);
     invalidate();
   }
+  // a rack lights blue when focused or hovered, else green or amber while a fit search is shown
+  const FIT_GLOW = { fits: 0x0d8a4a, add: 0x8a5a00 };
+  function glow(r, focus) {
+    const o = rackObjs[r.id], f = fit.byRack && fit.byRack[r.id];
+    const c = focus || state.hoverRack === r ? 0x1e1ec8 : f && FIT_GLOW[f.status] && !inRackMode() ? FIT_GLOW[f.status] : 0x000000;
+    o.bodyMat.emissive.set(c);
+    o.bodyMat.emissiveIntensity = focus ? 0.9 : 0.6;
+  }
   function setHover(r) {
     if (state.hoverRack === r) return;
     state.hoverRack = r;
-    racks.forEach(x => {
-      const o = rackObjs[x.id], focus = state.mode === 'walk' && walk.rack === x;
-      o.bodyMat.emissive.set(focus || r === x ? 0x1e1ec8 : 0x000000);
-      o.bodyMat.emissiveIntensity = focus ? 0.9 : 0.6;
-    });
+    racks.forEach(x => glow(x, state.mode === 'walk' && walk.rack === x));
     invalidate();
   }
 
@@ -1757,6 +1765,8 @@
     if (e.target.closest('[data-close-card]')) { hideCard(); clearTrace(); return; }
     const ca = e.target.closest('[data-ca]');
     if (ca) { const a = cardActions[+ca.dataset.ca]; if (a) a[1](); return; }
+    const fr = e.target.closest('[data-fit]');
+    if (fr) { openRack(rackById[fr.dataset.fit]); return; }
     const li = e.target.closest('[data-c]');
     if (li) { const c = cables.find(x => x.id === li.dataset.c); if (c) traceCable(c); }
   });
@@ -1766,6 +1776,7 @@
     const s = rackStats(r), news = r.items.filter(isItemNew).length, pw = power(r);
     const acts = [];
     if (state.mode !== 'rack') acts.push(['Open rack', () => openRack(r)]);
+    if (fit.results) acts.push(['Back to the fit results', showFitCard]);
     acts.push(['Row ' + r._row.key + ' elevation', () => openRow(r._row, 'front')]);
     showCard({
       badge: r.star.length ? 'Star center' : 'Rack', title: r.id + ' · ' + r.name,
@@ -1781,6 +1792,7 @@
         ['Power', powerSpan(pw)],
         ['Feeds A / B', kw(pw.feedA) + ' / ' + kw(pw.feedB) + (pw.status === 'over' ? ' · <span style="color:var(--pending)">one feed alone cannot carry it</span>' : '')],
         ['Exhaust (est.)', Math.round(pw.exhaustC) + ' °C · inlet ' + pw.inletC + ' °C'],
+        fit.byRack ? ['Fit: ' + esc(fitName(fit.shown)), fitText(fit.byRack[r.id])] : null,
       ],
       cables: cablesOfRack(r), note: SOURCE, actions: acts,
     });
@@ -2245,6 +2257,124 @@
       e => { const tr = e.target.closest('[data-r]'); if (tr) { closeModal(); openRack(rackById[tr.dataset.r]); } });
   }
   const powerOfData = Object.assign({}, PLAN.POWER_DEFAULTS, DATA.power || {});
+
+  // ------------------------------------------------------------------ where does it fit?
+  const FIT_PRESETS = [
+    ['server1', '1U server', { type: 'server', u: 1, copper: 3, fiber: 0, medium: 'mm' }],
+    ['server2', '2U server', { type: 'server', u: 2, copper: 3, fiber: 2, medium: 'mm' }],
+    ['storage', '2U storage array', { type: 'storage', u: 2, copper: 3, fiber: 4, medium: 'mm' }],
+    ['switch', 'Access switch', { type: 'switch', u: 1, copper: 1, fiber: 2, medium: 'mm' }],
+    ['router', 'Edge router', { type: 'router', u: 2, copper: 2, fiber: 4, medium: 'sm' }],
+    ['chassis', '6U blade chassis', { type: 'chassis', u: 6, copper: 4, fiber: 8, medium: 'mm' }],
+    ['custom', 'Something else', { type: 'appliance', u: 1, copper: 1, fiber: 0, medium: 'mm' }],
+  ];
+  const fitName = n => n.u + 'U ' + (TYPE_NAME[n.type] || n.type).toLowerCase() + ' · ' + n.watts + ' W';
+  const runText = (x, n) => x.run ? 'U' + x.run.top + (n.u > 1 ? '–U' + (x.run.top - n.u + 1) : '') : '—';
+  function fitText(x) {
+    if (!x) return '';
+    if (x.status === 'fits') return '<span style="color:var(--free)">Fits</span> at ' + runText(x, fit.shown);
+    if (x.status === 'add') return '<span style="color:var(--new)">Fits once you add</span> ' + esc(x.add.join(' + '));
+    return '<span style="color:var(--muted)">Does not fit:</span> ' + esc(x.why.join('; '));
+  }
+  function showFit() {
+    const n = fit.need || Object.assign({ preset: 'server2', watts: PLAN.watts({ kind: 'device', type: 'server', u: 2 }) }, FIT_PRESETS[1][2]);
+    const field = (k, label, html) => '<label class="field"><span>' + label + '</span>' + html + '</label>';
+    const numIn = (k, min, max) => '<input type="number" data-f="' + k + '" min="' + min + '" max="' + max + '" value="' + n[k] + '">';
+    openModal('<h2>Where does it fit?</h2><p class="sub">Describe the equipment and see which racks have a free run of U for it, patching ports for its cables and power to spare. ' +
+      'Ports count the free ports on each rack’s trunk panels and cassettes; when they run short, the panels or cassettes to add are listed.</p>' +
+      '<div class="fit-form">' +
+      field('preset', 'Equipment', '<select data-f="preset">' + FIT_PRESETS.map(p => '<option value="' + p[0] + '"' + (p[0] === n.preset ? ' selected' : '') + '>' + esc(p[1]) + '</option>').join('') + '</select>') +
+      field('type', 'Type', '<select data-f="type">' + PLAN.TYPES.map(t => '<option value="' + t + '"' + (t === n.type ? ' selected' : '') + '>' + esc(TYPE_NAME[t] || t) + '</option>').join('') + '</select>') +
+      field('u', 'Height (U)', numIn('u', 1, RACK_U)) +
+      field('copper', 'Copper ports to patch', numIn('copper', 0, 96)) +
+      field('fiber', 'Fiber ports to patch', numIn('fiber', 0, 48)) +
+      field('medium', 'Fiber', '<select data-f="medium"><option value="mm"' + (n.medium === 'mm' ? ' selected' : '') + '>Multimode</option><option value="sm"' + (n.medium === 'sm' ? ' selected' : '') + '>Single-mode</option></select>') +
+      field('watts', 'Power (W)', numIn('watts', 0, 20000)) +
+      '</div><div id="fitResults"></div>',
+      e => {
+        const tr = e.target.closest('[data-r]');
+        if (tr) { closeModal(); applyFit(); openRack(rackById[tr.dataset.r]); return; }
+        if (e.target.closest('[data-show]')) { closeModal(); applyFit(); if (state.mode !== 'room') goRoom(); showFitCard(); }
+      });
+    const form = $('.fit-form');
+    const read = () => {
+      const g = k => $('[data-f="' + k + '"]', form);
+      return { preset: g('preset').value, type: g('type').value, u: Math.max(1, Math.min(RACK_U, parseInt(g('u').value, 10) || 1)),
+        copper: Math.max(0, parseInt(g('copper').value, 10) || 0), fiber: Math.max(0, parseInt(g('fiber').value, 10) || 0),
+        medium: g('medium').value, watts: Math.max(0, parseInt(g('watts').value, 10) || 0) };
+    };
+    const render = () => {
+      fit.need = read();
+      const res = PLAN.findFit(DATA, fit.need), count = st => res.filter(x => x.status === st).length;
+      $('#fitResults').innerHTML = '<div class="kpis"><div class="kpi"><b style="color:var(--free)">' + count('fits') + '</b><small>Racks where it fits now</small></div>' +
+        '<div class="kpi warn"><b>' + count('add') + '</b><small>Fit once a panel or cassette is added</small></div>' +
+        '<div class="kpi"><b>' + count('no') + '</b><small>No room, ports or power</small></div></div>' +
+        '<div class="actions" style="margin-bottom:10px"><button class="btn primary" data-show>Show in 3D</button></div>' +
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Rack</th><th>Result</th><th>Free run</th><th>Power after</th></tr></thead><tbody>' +
+        res.map(x => '<tr data-r="' + esc(x.rack.id) + '" style="cursor:pointer"><td><b>' + esc(x.rack.id) + '</b><br><small style="color:var(--muted)">' + esc(x.rack.name) + '</small></td>' +
+          '<td>' + (x.status === 'fits' ? '<span class="badge free">Fits</span>' : x.status === 'add' ? '<span class="badge new">Add</span> ' + esc(x.add.join(' + ')) : '<span class="badge mute">No</span> <small style="color:var(--muted)">' + esc(x.why.join('; ')) + '</small>') + '</td>' +
+          '<td>' + runText(x, fit.need) + ' <small style="color:var(--muted)">(largest ' + x.largest + 'U)</small></td>' +
+          '<td>' + kw(x.powerAfter) + ' <small style="color:var(--muted)">of ' + kw(x.budget) + '</small></td></tr>').join('') + '</tbody></table></div>';
+      fit.preview = res;
+    };
+    form.addEventListener('input', e => {
+      const k = e.target.dataset.f;
+      if (k === 'preset') {
+        const p = FIT_PRESETS.find(q => q[0] === e.target.value)[2];
+        Object.keys(p).forEach(f => { $('[data-f="' + f + '"]', form).value = p[f]; });
+      }
+      if (k === 'preset' || k === 'type' || k === 'u') $('[data-f="watts"]', form).value = PLAN.watts({ kind: 'device', type: $('[data-f="type"]', form).value, u: parseInt($('[data-f="u"]', form).value, 10) || 1 });
+      render();
+    });
+    render();
+  }
+  // keep the last search on screen: racks glow, and each rack that can take it shows a ghost of it
+  function applyFit() {
+    clearFit();
+    fit.results = fit.preview;
+    fit.shown = Object.assign({}, fit.need);
+    fit.byRack = {};
+    fit.results.forEach(x => {
+      fit.byRack[x.rack.id] = x;
+      if (!x.run) return;
+      const r = x.rack, o = rackObjs[r.id], n = fit.shown;
+      const top = x.run.top, bottom = top - n.u + 1, yb = BASE + (bottom - 1) * U, h = n.u * U, depth = Math.min(DEPTH[n.type] || 0.5, r.d - 0.25);
+      const g = new THREE.Group();
+      const col = x.status === 'fits' ? C.free : x.status === 'add' ? C.new : C.muted;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(RAIL, h - 0.002, depth), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.28, depthWrite: false }));
+      box.position.set(0, yb + h / 2, FRONT_RAIL - depth / 2);
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color: col }));
+      edges.position.copy(box.position);
+      const lab = css2d('Proposed ' + esc(fitName(n)) + '<br>' + runText(x, n), 'ghost-label ' + x.status);
+      lab.position.set(0, yb + h / 2, FRONT_RAIL + 0.02);
+      g.add(box, edges, lab);
+      g.userData.label = lab;
+      o.group.add(g);
+      o.ghost = g;
+    });
+    applyVisibility();
+  }
+  function clearFit() {
+    racks.forEach(r => {
+      const o = rackObjs[r.id];
+      if (!o.ghost) return;
+      o.ghost.traverse(m => { if (m.geometry) m.geometry.dispose(); if (m.material) m.material.dispose(); });
+      o.group.remove(o.ghost);
+      o.ghost = null;
+    });
+    fit.results = fit.byRack = null;
+    applyVisibility();
+  }
+  function showFitCard() {
+    if (!fit.results) return;
+    const ok = fit.results.filter(x => x.status !== 'no');
+    showCard({
+      badge: 'Where does it fit?', title: fitName(fit.shown),
+      html: '<p style="color:var(--muted);margin:4px 0 8px">Green racks take it as they are, amber ones once a panel or cassette is added; star centers come last, as they are for patching. Open one to see the proposed position.</p>' +
+        '<ul class="cables">' + (ok.length ? ok.map(x => '<li data-fit="' + esc(x.rack.id) + '"><span class="dot" style="background:' + (x.status === 'fits' ? C.free : C.new) + '"></span><span>' + esc(x.rack.id) + ' · ' + esc(x.rack.name) + '</span><small>' + (x.status === 'fits' ? runText(x, fit.shown) : '+ ' + x.add.length + ' to add') + '</small></li>').join('') : '<li><span>No rack can take it.</span></li>') + '</ul>',
+      actions: [['Change the search', showFit], ['Clear', () => { clearFit(); hideCard(); }]],
+    });
+  }
   let notesCache = null;
   function showNotes() {
     const list = notesCache || (notesCache = observations());
@@ -2367,6 +2497,7 @@
     else if (a === 'tour') startTour();
     else if (a === 'occupancy') showOccupancy();
     else if (a === 'power') showPower();
+    else if (a === 'fit') showFit();
     else if (a === 'shopping') showShopping();
     else if (a === 'notes') showNotes();
   });

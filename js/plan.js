@@ -123,6 +123,8 @@
   // need: { u, copper, fiber, medium: 'mm' | 'sm', watts }
   // For each rack: does the device fit as things are, fit once a panel or cassette is
   // added, or not at all, and why.
+  const RANK = { fits: 0, add: 1, no: 2 };
+  const isStar = r => (Array.isArray(r.starCenter) ? r.starCenter.length : r.starCenter) ? 1 : 0;
   function findFit(data, need) {
     const use = portUse(data);
     const n = Object.assign({ u: 1, copper: 0, fiber: 0, medium: 'mm', watts: 0 }, need);
@@ -161,7 +163,9 @@
         rack: r, status, why, add, run: devRun || null, largest, free,
         powerAfter: after, budget: pw.budget, headroom: pw.budget - after,
       };
-    }).sort((a, b) => ({ fits: 0, add: 1, no: 2 })[a.status] - ({ fits: 0, add: 1, no: 2 })[b.status] || b.headroom - a.headroom);
+    // best first: fits, then fits with additions; star centers (patching racks) after the
+    // others; then the rack with the most power to spare
+    }).sort((a, b) => RANK[a.status] - RANK[b.status] || isStar(a.rack) - isStar(b.rack) || b.headroom - a.headroom);
   }
 
   // ------------------------------------------------------------------ validation

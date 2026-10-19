@@ -133,3 +133,11 @@ test('CSV: a hand-written inventory is read, and mistakes are reported by line',
   assert.ok(bad.errors.some((e) => /Line 5.*unknown kind/.test(e)));
   assert.match(P.fromCsv('name,size\nx,1').errors.join(), /Missing column "rack"/);
 });
+
+test('where does it fit: star centers come after the other racks that fit', () => {
+  const res = P.findFit(sample, { u: 1, copper: 1, watts: 100 });
+  const fits = res.filter((x) => x.status === 'fits');
+  const star = (r) => (Array.isArray(r.starCenter) ? r.starCenter.length : !!r.starCenter);
+  const firstStar = fits.findIndex((x) => star(x.rack));
+  assert.ok(firstStar > 0 && fits.slice(firstStar).every((x) => star(x.rack)), fits.map((x) => x.rack.id).join(' '));
+});
