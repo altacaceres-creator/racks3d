@@ -358,6 +358,8 @@
       rack.items = items;
       delete rack._list;
     });
+    const lineOf = e => { const m = /^Line (\d+)/.exec(e); return m ? +m[1] : Infinity; };
+    errors.sort((a, b) => lineOf(a) - lineOf(b));
     const data = {
       meta: { title: title || 'Imported data hall', imported: true },
       rows: rowsMap, racks, externals: [], trunks: [], cables: [], notes: [],

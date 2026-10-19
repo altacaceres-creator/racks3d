@@ -11,6 +11,8 @@
     return;
   }
 
+  // the data as loaded, before the view adds its own fields to it: what Import exports
+  const RAW = JSON.parse(JSON.stringify(DATA));
   const V3 = THREE.Vector3;
   const v = (x, y, z) => new V3(x, y, z);
   const $ = (s, el) => (el || document).querySelector(s);
@@ -1770,7 +1772,9 @@
     const li = e.target.closest('[data-c]');
     if (li) { const c = cables.find(x => x.id === li.dataset.c); if (c) traceCable(c); }
   });
-  const SOURCE = (DATA.meta && DATA.meta.private) ? 'Source: private data file (not published).' : 'Source: data/sample-data.js — fictitious sample data.';
+  const SOURCE = (DATA.meta && DATA.meta.private) ? 'Source: private data file (not published).'
+    : (DATA.meta && DATA.meta.imported) ? 'Source: a file imported in this browser (not published).'
+    : 'Source: data/sample-data.js — fictitious sample data.';
 
   function showRackCard(r) {
     const s = rackStats(r), news = r.items.filter(isItemNew).length, pw = power(r);
@@ -2375,6 +2379,68 @@
       actions: [['Change the search', showFit], ['Clear', () => { clearFit(); hideCard(); }]],
     });
   }
+  // ------------------------------------------------------------------ import
+  function download(name, text, type) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: type + ';charset=utf-8' }));
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  // A file's text → { data, errors }. CSV is the inventory; JSON or a .js data file is the full model.
+  function readData(name, text) {
+    if (/\.csv$/i.test(name)) return PLAN.fromCsv(text, name);
+    try {
+      const json = text.replace(/^[\s\S]*?window\.DC_DATA\s*=\s*/, '').replace(/;\s*$/, '');
+      return { data: JSON.parse(json), errors: [] };
+    } catch (e) { return { data: null, errors: ['Not a CSV, or JSON in the racks3d format: ' + e.message] }; }
+  }
+  function showImport() {
+    const cur = window.Racks3dImport && window.Racks3dImport.load();
+    let pending = null;
+    openModal('<h2>Import your data hall</h2><p class="sub">Open an <b>inventory CSV</b> (racks and the equipment in them, one line per item) or a <b>JSON</b> file in the same format as <code>data/sample-data.js</code> (with cables and trunks). ' +
+      'The file is read here and kept in this browser only: nothing is uploaded.</p>' +
+      (cur ? '<p class="note-line">Showing <b>' + esc(cur.name) + '</b>, imported ' + esc(new Date(cur.at).toLocaleString()) + '. <button class="btn" data-k="sample">Back to the sample</button></p>' : '') +
+      '<label class="drop" id="drop"><input type="file" id="file" accept=".csv,.json,.js,text/csv,application/json" hidden><b>Drop a file here</b><small>or click to choose · .csv, .json</small></label>' +
+      '<div id="importResult"></div>' +
+      '<div class="actions"><button class="btn" data-k="template">Download the CSV of this hall</button><button class="btn" data-k="json">Download the JSON of this hall</button></div>' +
+      '<p class="sub" style="margin-top:10px">The CSV columns are <code>' + esc('rack, row, rack_name, width, depth, rack_kw, u_top, kind, label, type, u, ports, uplinks, uplink_medium, watts, role, cassettes, new') + '</code>. ' +
+      '<code>kind</code> is device, utp, lc or org; <code>u_top</code> is the U the item starts at; a line with no kind just declares an empty rack. The CSV of this hall is a ready-made example.</p>',
+      e => {
+        const k = e.target.closest('[data-k]');
+        if (!k) return;
+        if (k.dataset.k === 'template') download('racks3d-inventory.csv', '\uFEFF' + PLAN.toCsv(RAW), 'text/csv');
+        else if (k.dataset.k === 'json') download('racks3d-data.json', JSON.stringify(RAW, null, 1), 'application/json');
+        else if (k.dataset.k === 'sample') { window.Racks3dImport.clear(); location.reload(); }
+        else if (k.dataset.k === 'open' && pending) {
+          if (window.Racks3dImport.save(pending)) location.reload();
+          else $('#importResult').insertAdjacentHTML('beforeend', '<p class="note-line bad">This browser does not allow saving it (private window or blocked storage).</p>');
+        }
+      });
+    const drop = $('#drop'), file = $('#file');
+    const take = f => {
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => {
+        const { data, errors } = readData(f.name, String(rd.result));
+        const v = data ? PLAN.validate(data) : { errors: [], warnings: [] };
+        const all = errors.concat(v.errors);
+        const devices = data ? data.racks.reduce((n, r) => n + (r.items || []).filter(it => it && it.kind === 'device').length, 0) : 0;
+        pending = all.length ? null : { name: f.name, at: Date.now(), data };
+        const list = (xs, cls) => '<ul class="notes">' + xs.slice(0, 30).map(x => '<li class="' + cls + '"><span class="ico">!</span><div>' + esc(x) + '</div></li>').join('') + (xs.length > 30 ? '<li class="' + cls + '"><span class="ico">…</span><div>and ' + (xs.length - 30) + ' more</div></li>' : '') + '</ul>';
+        $('#importResult').innerHTML = '<h3>' + esc(f.name) + '</h3>' +
+          (data ? '<p class="sub">' + data.racks.length + ' racks · ' + devices + ' devices · ' + ((data.cables || []).length) + ' cables</p>' : '') +
+          (all.length ? '<p class="note-line bad">' + all.length + ' problem(s) to fix in the file before it can be opened:</p>' + list(all, 'bad')
+            : '<div class="actions" style="margin:0 0 10px"><button class="btn primary" data-k="open">Open it</button></div>') +
+          (v.warnings.length ? '<p class="note-line">' + v.warnings.length + ' warning(s), it opens anyway:</p>' + list(v.warnings, 'warn') : '');
+      };
+      rd.readAsText(f);
+    };
+    file.onchange = () => take(file.files[0]);
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+    drop.ondragleave = () => drop.classList.remove('over');
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files[0]); };
+  }
   let notesCache = null;
   function showNotes() {
     const list = notesCache || (notesCache = observations());
@@ -2498,6 +2564,7 @@
     else if (a === 'occupancy') showOccupancy();
     else if (a === 'power') showPower();
     else if (a === 'fit') showFit();
+    else if (a === 'import') showImport();
     else if (a === 'shopping') showShopping();
     else if (a === 'notes') showNotes();
   });

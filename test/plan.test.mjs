@@ -128,6 +128,7 @@ test('CSV: a hand-written inventory is read, and mistakes are reported by line',
 
   const bad = P.fromCsv('rack,u_top,kind,label,type,u\nB1,10,device,X,server,2\nB1,10,device,Y,server,1\nB1,50,device,Z,server,1\nB1,5,shelf,,,');
   assert.equal(bad.errors.length, 3, bad.errors.join(' | '));
+  assert.deepEqual(bad.errors.map((e) => +/Line (\d+)/.exec(e)[1]), [3, 4, 5], 'in line order');
   assert.ok(bad.errors.some((e) => /Line 3.*overlaps/.test(e)));
   assert.ok(bad.errors.some((e) => /Line 4.*u_top/.test(e)));
   assert.ok(bad.errors.some((e) => /Line 5.*unknown kind/.test(e)));
