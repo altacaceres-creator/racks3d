@@ -550,6 +550,14 @@ table.grid tr:hover td { background: rgba(255, 255, 255, .02); }
 .fatal { position: fixed; inset: 0; display: grid; place-items: center; color: var(--pending); }
 
 /* ---------- narrow screens: panels dock at the bottom */
+/* laptop widths: tighten the top bar so it stays on one line */
+@media (max-width: 1400px) and (min-width: 761px) {
+  #topbar { gap: 8px; }
+  .tools button { padding: 5px 6px; }
+  .brand { min-width: 0; }
+  .brand small { display: block; max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #search { min-width: 150px; }
+}
 @media (max-width: 760px) {
   #topbar { gap: 6px; }
   .brand { min-width: 0; }
