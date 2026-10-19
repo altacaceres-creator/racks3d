@@ -749,6 +749,9 @@ def main():
                  "seed": args.seed, "reserve": RESERVE},
         "room": {"coldAisle": 1.2, "hotAisle": 1.0, "rackHeight": 2.0,
                  "trayHeights": {"copper": 2.3, "fiber": 2.5}, "crossTrays": [1.2, 4.2]},
+        # power budget per rack (kW, a rack can override it with "powerKw"), cold-aisle
+        # temperature and the fan airflow per kW the exhaust estimate assumes
+        "power": {"rackKw": 5, "inletC": 22, "cfmPerKw": 120},
         "starCenters": {"copper": list(g.copper_star.values()), "mm": g.mm_star, "sm": g.sm_star},
         "rows": g.rows,
         "racks": [{k: v for k, v in r.items() if not k.startswith("_")} for r in g.racks],

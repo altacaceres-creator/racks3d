@@ -52,6 +52,21 @@
   const MEDIUM_NAME = { copper: 'Copper', mm: 'MM fiber', sm: 'SM fiber' };
   const mkey = m => (m === 'mm' || m === 'sm') ? m : 'cu';
 
+  // power, heat, validation and the fit search live in js/plan.js (no 3D, tested under node)
+  const PLAN = window.Racks3dPlan;
+  const power = r => PLAN.rackPower(r, DATA);
+  const kw = w => (w / 1000).toFixed(w < 10000 ? 2 : 1) + ' kW';
+  const HEAT = [[22, '#2f9bff'], [30, '#3ddc84'], [36, '#ffd23f'], [42, '#ff8a1f'], [48, '#ff4d5e']];
+  function heatColor(t) {
+    const c = new THREE.Color(HEAT[0][1]);
+    for (let i = 1; i < HEAT.length; i++) {
+      if (t <= HEAT[i][0]) return c.set(HEAT[i - 1][1]).lerp(new THREE.Color(HEAT[i][1]), Math.max(0, (t - HEAT[i - 1][0]) / (HEAT[i][0] - HEAT[i - 1][0])));
+    }
+    return c.set(HEAT[HEAT.length - 1][1]);
+  }
+  const POWER_CLS = { ok: 'free', high: 'new', over: 'pending' };
+  const powerSpan = p => '<span style="color:var(--' + ({ ok: 'text', high: 'new', over: 'pending' })[p.status] + ')">' + kw(p.w) + '</span> of ' + kw(p.budget) + ' (' + Math.round(p.util * 100) + ' %)';
+
   // ------------------------------------------------------------------ data model
   const racks = DATA.racks;
   const rackById = {}, panelByKey = {}, devByLabel = {}, extById = {};
@@ -1027,6 +1042,7 @@
     { id: 'trays', label: 'Cable trays', group: 'Room', color: '#8a91b4' },
     { id: 'doors', label: 'Rack doors', group: 'Room', color: '#4b4f78' },
     { id: 'labels', label: 'Rack labels', group: 'Room', color: '#eceaf4' },
+    { id: 'heat', label: 'Heat map (exhaust)', group: 'Room', color: '#ff8a1f' },
     { id: 'trunk-cu', label: 'Copper trunks', group: 'Trunks', color: '#3a6df0' },
     { id: 'trunk-mm', label: 'MM fiber trunks', group: 'Trunks', color: '#7ac81e' },
     { id: 'trunk-sm', label: 'SM fiber trunks', group: 'Trunks', color: '#e8b820' },
@@ -1089,7 +1105,23 @@
     layerCount.trays = rows.length * 2 + CROSS.length * 2;
     layerCount.doors = racks.length * 2;
     layerCount.labels = racks.length;
+    layerCount.heat = racks.length;
   })();
+
+  // Heat map: a tile on the floor behind each rack, in the hot aisle, coloured by its
+  // estimated exhaust temperature, with the temperature written on it.
+  const heatGroup = new THREE.Group();
+  scene.add(heatGroup);
+  racks.forEach(r => {
+    const p = power(r), deep = Math.min(0.8, ROOM.hotAisle - 0.1);
+    const tile = new THREE.Mesh(new THREE.PlaneGeometry(r.w - 0.04, deep),
+      new THREE.MeshBasicMaterial({ color: heatColor(p.exhaustC), transparent: true, opacity: 0.55, depthWrite: false }));
+    tile.rotation.x = -Math.PI / 2;
+    tile.position.copy(toW(r, v(0, 0.006, -r.d - deep / 2 - 0.02)));
+    const lab = css2d(Math.round(p.exhaustC) + ' °C<small>' + kw(p.w) + '</small>', 'heat-label ' + p.status);
+    lab.position.copy(toW(r, v(0, 0.35, -r.d - deep / 2)));
+    heatGroup.add(tile, lab);
+  });
 
   // ------------------------------------------------------------------ helpers for text
   function fmtRange(it) { return it._u === 1 ? 'U' + it._top : 'U' + it._top + '–U' + it._bottom; }
@@ -1194,6 +1226,7 @@
     });
     doorMat.opacity = (m === 'aisle' || m === 'walk') ? 0.38 : 0.9;
     wallsGroup.visible = L.has('walls') && !inRack && !isRow;
+    heatGroup.visible = L.has('heat') && !inRack && !isRow;
     traysGroup.visible = L.has('trays') && !inRack && !isRow;
     const clip = inRack && state.rack ? rackBox(state.rack) : isRow && state.row ? rowBox(state.row) : null;
     CABLE_LAYERS.forEach(id => {
@@ -1623,7 +1656,8 @@
     p.innerHTML = '<span class="badge mute">' + esc(kicker) + '</span> ' + (r.star.length ? '<span class="badge">Star center ' + r.star.map(x => x === 'copper' ? 'Cu' : x.toUpperCase()).join(' + ') + '</span>' : '') +
       '<h3>' + esc(r.id) + ' · ' + esc(r.name) + '</h3>' +
       '<div class="kv"><div><b>' + s.uUsed + '</b><small>U used</small></div><div><b style="color:var(--free)">' + s.uFree + '</b><small>U free</small></div>' +
-      '<div><b>' + s.devices + '</b><small>Devices</small></div><div><b>' + s.cables + '</b><small>Cables</small></div></div>' +
+      '<div><b>' + s.devices + '</b><small>Devices</small></div><div><b>' + s.cables + '</b><small>Cables</small></div>' +
+      '<div><b style="color:var(--' + ({ ok: 'text', high: 'new', over: 'pending' })[power(r).status] + ')">' + kw(power(r).w) + '</b><small>Power</small></div></div>' +
       (devs.length ? '<div style="color:var(--muted);font-size:12px">' + devs.slice(0, 8).map(d => esc(d.label)).join(' · ') + (devs.length > 8 ? ' …' : '') + '</div>' : '') +
       (news.length ? '<ul>' + news.map(it => '<li style="color:var(--new)">To order: ' + esc(itemName(it)) + ' (' + fmtRange(it) + ')</li>').join('') + '</ul>' : '');
     p.hidden = false;
@@ -1729,7 +1763,7 @@
   const SOURCE = (DATA.meta && DATA.meta.private) ? 'Source: private data file (not published).' : 'Source: data/sample-data.js — fictitious sample data.';
 
   function showRackCard(r) {
-    const s = rackStats(r), news = r.items.filter(isItemNew).length;
+    const s = rackStats(r), news = r.items.filter(isItemNew).length, pw = power(r);
     const acts = [];
     if (state.mode !== 'rack') acts.push(['Open rack', () => openRack(r)]);
     acts.push(['Row ' + r._row.key + ' elevation', () => openRow(r._row, 'front')]);
@@ -1744,6 +1778,9 @@
         ['Patching', s.panels + ' UTP panels · ' + s.trays + ' fiber trays'],
         ['Ports Cu / MM / SM', s.copper.used + '/' + s.copper.inst + ' · ' + s.mm.used + '/' + s.mm.inst + ' · ' + s.sm.used + '/' + s.sm.inst],
         news ? ['New items', '<span style="color:var(--new)">' + news + ' to order</span>'] : null,
+        ['Power', powerSpan(pw)],
+        ['Feeds A / B', kw(pw.feedA) + ' / ' + kw(pw.feedB) + (pw.status === 'over' ? ' · <span style="color:var(--pending)">one feed alone cannot carry it</span>' : '')],
+        ['Exhaust (est.)', Math.round(pw.exhaustC) + ' °C · inlet ' + pw.inletC + ' °C'],
       ],
       cables: cablesOfRack(r), note: SOURCE, actions: acts,
     });
@@ -1768,6 +1805,7 @@
         ['Size', '482.6 mm (19") × ' + (it._u * 44.45).toFixed(2) + ' mm × ' + Math.round(g.depth * 1000) + ' mm deep'],
         it.kind === 'utp' ? ['Role', esc(ROLE_NAME[it.role] || it.role)] : null,
         ports ? ['Ports', esc(ports)] : null,
+        it.kind === 'device' ? ['Power', PLAN.watts(it) + ' W' + (typeof it.watts === 'number' ? '' : ' (typical for a ' + esc((TYPE_NAME[it.type] || it.type).toLowerCase()) + ')')] : null,
         peer ? ['Trunk to', esc(shortRef(peer.peer))] : null,
         peers.length ? ['Trunks to', esc(peers.map(p => shortRef(p.peer)).join(', '))] : null,
         ['Status', isItemNew(it) ? '<span style="color:var(--new)">New — to order</span>' : 'Installed'],
@@ -2119,6 +2157,10 @@
     if (act.length) out.push({ sev: 'info', text: act.length + ' active cable(s) cannot pass through patch panels; they are laid in the tray with a fixed length.', sub: act.map(c => c.a.item + ' ↔ ' + c.b.item).join(' · ') });
     const pend = cables.filter(c => c.status === 'pending');
     if (pend.length) out.push({ sev: 'bad', text: pend.length + ' pending cable(s) without a confirmed port.', sub: pend.map(c => c.id + ' ' + cableSummary(c)).join(' · ') });
+    racks.forEach(r => {
+      const p = power(r);
+      if (p.status !== 'ok') out.push({ sev: p.status === 'over' ? 'bad' : 'warn', text: r.id + ' draws ' + kw(p.w) + ', ' + Math.round(p.util * 100) + ' % of its ' + kw(p.budget) + ' budget' + (p.status === 'over' ? ': one feed alone could not carry it.' : '.'), sub: 'Estimated exhaust ' + Math.round(p.exhaustC) + ' °C', go: () => openRack(r) });
+    });
     racks.forEach(r => { const s = rackStats(r); if (s.uFree < 4) out.push({ sev: 'warn', text: r.id + ' has only ' + s.uFree + 'U free.', sub: r.name, go: () => openRack(r) }); });
     const ext = DATA.externals || [];
     if (ext.length) out.push({ sev: 'info', text: ext.length + ' element(s) are outside the racks.', sub: ext.map(e => e.label || e.id).join(' · ') });
@@ -2181,6 +2223,28 @@
         setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       });
   }
+  function showPower() {
+    const all = racks.map(r => ({ r, p: power(r) }));
+    const total = sum(all, x => x.p.w), budget = sum(all, x => x.p.budget);
+    const hot = all.reduce((a, x) => (x.p.exhaustC > a.p.exhaustC ? x : a), all[0]);
+    const high = all.filter(x => x.p.status !== 'ok').length;
+    const dot = t => '<i class="dot" style="background:#' + heatColor(t).getHexString() + '"></i>';
+    openModal('<h2>Power &amp; heat</h2><p class="sub">Load per rack against its budget, split over the A and B feeds, and the estimated exhaust temperature in the hot aisle. ' +
+      'Devices draw the typical watts of their type unless the data gives <code>watts</code>. Turn on the <b>Heat map</b> layer to see it on the floor.</p>' +
+      '<div class="kpis"><div class="kpi"><b>' + kw(total) + '</b><small>Total load · ' + Math.round(total / budget * 100) + ' % of ' + kw(budget) + '</small></div>' +
+      '<div class="kpi' + (high ? ' warn' : '') + '"><b>' + high + '</b><small>Racks above 80 % of budget</small></div>' +
+      '<div class="kpi"><b>' + Math.round(hot.p.exhaustC) + ' °C</b><small>Hottest exhaust · ' + esc(hot.r.id) + '</small></div>' +
+      '<div class="kpi"><b>' + powerOfData.inletC + ' °C</b><small>Cold-aisle inlet</small></div></div>' +
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Rack</th><th>Load / budget</th><th>Feed A</th><th>Feed B</th><th>Exhaust</th></tr></thead><tbody>' +
+      all.map(({ r, p }) => '<tr data-r="' + esc(r.id) + '" style="cursor:pointer"><td><b>' + esc(r.id) + '</b><br><small style="color:var(--muted)">' + esc(r.name) + '</small></td>' +
+        '<td><div class="bar-cell"><div class="bar"><span class="fill" style="width:' + Math.min(100, p.util * 100).toFixed(1) + '%;background:var(--' + ({ ok: 'accent', high: 'new', over: 'pending' })[p.status] + ')"></span><i class="mark" style="left:80%" title="80 %"></i></div><small>' + kw(p.w) + ' / ' + kw(p.budget) + '</small></div></td>' +
+        '<td>' + kw(p.feedA) + '</td><td>' + kw(p.feedB) + '</td><td>' + dot(p.exhaustC) + ' ' + Math.round(p.exhaustC) + ' °C</td></tr>').join('') +
+      '</tbody></table></div>' +
+      '<div class="legend"><span><i class="dot" style="background:var(--accent)"></i>Under 80 %</span><span><i class="dot" style="background:var(--new)"></i>80–100 %</span><span><i class="dot" style="background:var(--pending)"></i>Over budget: with 2N feeds, one feed alone could not carry the rack</span><span><i class="dot" style="background:#fff"></i>80 % mark</span></div>' +
+      '<p class="sub" style="margin-top:10px">The exhaust is an estimate, not a measurement: fans sized for the rack budget (' + powerOfData.cfmPerKw + ' CFM per kW), so ΔT = 3.16 × W ÷ CFM.</p>',
+      e => { const tr = e.target.closest('[data-r]'); if (tr) { closeModal(); openRack(rackById[tr.dataset.r]); } });
+  }
+  const powerOfData = Object.assign({}, PLAN.POWER_DEFAULTS, DATA.power || {});
   let notesCache = null;
   function showNotes() {
     const list = notesCache || (notesCache = observations());
@@ -2302,6 +2366,7 @@
     else if (a === 'walk') { if (state.mode !== 'walk') { pushMode(); setMode('walk', { walkIdx: 0 }); } }
     else if (a === 'tour') startTour();
     else if (a === 'occupancy') showOccupancy();
+    else if (a === 'power') showPower();
     else if (a === 'shopping') showShopping();
     else if (a === 'notes') showNotes();
   });

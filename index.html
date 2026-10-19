@@ -28,6 +28,7 @@
     <button data-act="walk">Walk</button>
     <button data-act="tour">Rack tour</button>
     <button data-act="occupancy">Occupancy</button>
+    <button data-act="power">Power</button>
     <button data-act="shopping">Shopping</button>
     <button data-act="notes">Notes <span id="notesCount" class="pill warn"></span></button>
   </nav>
@@ -81,6 +82,7 @@
   // Optional private data, never committed: open index.html?data=private
   if (/[?&]data=private\b/.test(location.search)) document.write('<script src="data/private-data.js"><\/script>');
 </script>
+<script src="js/plan.js"></script>
 <script src="js/racks3d.js"></script>
 </body>
 </html>

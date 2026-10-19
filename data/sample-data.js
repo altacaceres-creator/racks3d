@@ -19,6 +19,11 @@ window.DC_DATA = {
    4.2
   ]
  },
+ "power": {
+  "rackKw": 5,
+  "inletC": 22,
+  "cfmPerKw": 120
+ },
  "starCenters": {
   "copper": [
    "R1-08",
