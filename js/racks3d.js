@@ -1315,6 +1315,25 @@
   }
   controls.addEventListener('change', invalidate);
 
+  // Looking at a rack or a row, the wheel zooms toward the mouse, so you can zoom into any U
+  // instead of only the middle. Elsewhere OrbitControls zooms as usual.
+  const zoomRay = new THREE.Raycaster(), zoomNdc = new THREE.Vector2(), zoomPlane = new THREE.Plane(), zoomAt = new THREE.Vector3();
+  window.addEventListener('wheel', e => {
+    if (e.target !== renderer.domElement || !controls.enabled || !['rack', 'tour', 'row'].includes(state.mode)) return;
+    e.preventDefault(); e.stopPropagation();
+    const b = renderer.domElement.getBoundingClientRect();
+    zoomNdc.set(((e.clientX - b.left) / b.width) * 2 - 1, -((e.clientY - b.top) / b.height) * 2 + 1);
+    zoomRay.setFromCamera(zoomNdc, camera);
+    zoomPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(v()), controls.target);
+    if (!zoomRay.ray.intersectPlane(zoomPlane, zoomAt)) return;
+    const d = camera.position.distanceTo(controls.target);
+    const s = Math.min(Math.max(Math.exp(e.deltaY * 0.0015), controls.minDistance / d), 12 / d);
+    camera.position.sub(zoomAt).multiplyScalar(s).add(zoomAt);
+    controls.target.sub(zoomAt).multiplyScalar(s).add(zoomAt);
+    controls.update();
+    invalidate();
+  }, { capture: true, passive: false });
+
   // ------------------------------------------------------------------ camera presets
   function roomCam() {
     const cz = (RZ0 + RZ1) / 2, k = Math.max(1, 1.5 / Math.max(0.3, camera.aspect));
@@ -1760,6 +1779,7 @@
     next: new THREE.MeshBasicMaterial({ color: 0x8a8fc0, transparent: true, opacity: 0.3, depthWrite: false }),
     // the walked part also shows through racks, faintly, so it never disappears behind them
     xray: new THREE.MeshBasicMaterial({ color: C.hover, transparent: true, opacity: 0.3, depthTest: false, depthWrite: false }),
+    packet: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false }),
   };
   const ghostMat = new THREE.MeshBasicMaterial({ color: 0x9aa0d0, transparent: true, opacity: 0.06, depthWrite: false });
   const GHOST = [ghostMat, ghostMat, ghostMat, ghostMat, ghostMat, ghostMat];
@@ -1807,18 +1827,53 @@
     if (!trace.group) return;
     trace.group.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.isCSS2DObject && o.element) o.element.remove(); });
     scene.remove(trace.group);
-    trace.group = null;
+    trace.group = null; trace.flow = null;
+  }
+  const PACKET_GAP = 0.3, PACKET_SPEED = 0.7;   // metres between packets, metres per second
+  const REDUCED_MOTION = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function flowLane(pts) {
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
+    return { pts, cum, len: cum[cum.length - 1] };
+  }
+  const flowM = new THREE.Matrix4(), flowP = new V3();
+  function moveFlow(dt) {
+    const f = trace.flow;
+    f.t = ((f.t || 0) + dt * PACKET_SPEED) % PACKET_GAP;
+    let li = 0, base = 0;
+    for (let k = 0; k < f.n; k++) {
+      const d = f.t + k * PACKET_GAP;
+      while (li < f.lanes.length - 1 && d > base + f.lanes[li].len) base += f.lanes[li++].len;
+      const L = f.lanes[li], x = Math.min(L.len, d - base);
+      let i = 1;
+      while (i < L.cum.length - 1 && L.cum[i] < x) i++;
+      const a = L.cum[i - 1], seg = (L.cum[i] - a) || 1;
+      flowP.lerpVectors(L.pts[i - 1], L.pts[i], (x - a) / seg);
+      f.mesh.setMatrixAt(k, flowM.makeTranslation(flowP.x, flowP.y, flowP.z));
+    }
+    f.mesh.instanceMatrix.needsUpdate = true;
   }
   function drawTrace() {
     clearTraceGroup();
-    const g = trace.group = new THREE.Group(), c = trace.c;
+    const g = trace.group = new THREE.Group(), c = trace.c, lanes = [];
     c._pieces.forEach((pc, i) => {
       const kind = trace.whole || i < trace.step ? 'done' : i === trace.step ? 'now' : 'next';
       const base = pc.trunk ? (TRUNK_R[trunkLayer(pc.trunk)] || 0.008) : 0.0045;
       const pts = rounded(pc.pts, pc.type === 'patch' ? 0.025 : 0.06);
       g.add(new THREE.Mesh(tubeGeo(pts, base + (kind === 'now' ? 0.008 : 0.004), 8), traceMats[kind]));
       if (kind !== 'next') { const x = new THREE.Mesh(tubeGeo(pts, base + 0.003, 6), traceMats.xray); x.renderOrder = 15; g.add(x); }
+      if (kind !== 'next') lanes.push(flowLane(pts));
     });
+    // data packets running from A to B along the part of the cable walked so far
+    const total = sum(lanes, l => l.len), n = Math.min(400, Math.floor(total / PACKET_GAP));
+    trace.flow = null;
+    if (n && !REDUCED_MOTION) {
+      const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.011, 8, 6), traceMats.packet, n);
+      mesh.renderOrder = 16; mesh.frustumCulled = false;
+      g.add(mesh);
+      trace.flow = { lanes, total, mesh, n };
+      moveFlow(0);
+    }
     trace.steps.forEach((st, i) => {
       const cur = !trace.whole && i === trace.step, seen = trace.whole || i <= trace.step;
       const m = new THREE.Mesh(new THREE.SphereGeometry(cur ? 0.028 : 0.016, 14, 10), cur ? traceMats.now : seen ? traceMats.done : traceMats.next);
@@ -1853,7 +1908,9 @@
     flyTo(cam.pos, cam.target, cam.fov, 900);
   }
   function tickTrace(dt) {
-    if (state.mode !== 'trace' || !trace.playing) return;
+    if (state.mode !== 'trace') return;
+    if (trace.flow) { moveFlow(dt); invalidate(); }
+    if (!trace.playing) return;
     trace.t += dt;
     if (trace.t < TRACE_DWELL) return;
     if (trace.step >= trace.steps.length - 1) { trace.playing = false; traceGo(trace.step, true); return; }
@@ -2701,7 +2758,7 @@
   function updateHint() {
     const h = {
       room: 'Click a rack to open it · drag to orbit, right-drag to pan · <kbd>/</kbd> search',
-      rack: 'Click a port to trace its cable · double-click an item to inspect · <kbd>←</kbd><kbd>→</kbd> racks · <kbd>Esc</kbd> back',
+      rack: 'Click a port to trace its cable · double-click an item to inspect · wheel zooms where you point, right-drag moves · <kbd>←</kbd><kbd>→</kbd> racks · <kbd>Esc</kbd> back',
       row: 'Front or rear elevation · click a rack to open it · <kbd>Esc</kbd> back',
       aisle: '<kbd>←</kbd><kbd>→</kbd> walk along the aisle · <kbd>Esc</kbd> back',
       walk: '<kbd>Space</kbd> pause · <kbd>←</kbd><kbd>→</kbd> previous / next rack · <kbd>Esc</kbd> exit',
@@ -2768,5 +2825,5 @@
   loop();
 
   // Small read-only handle for debugging from the console.
-  window.racks3d = { state, rows, aisles, renderer, scene, camera, stats: () => racks.map(r => [r.id, rackStats(r)]), shopping, observations, trace: (id, i, whole) => { const c = cables.find(k => k.id === id); if (trace.c !== c) openTrace(c); traceGo(i || 0, whole); } };
+  window.racks3d = { state, rows, aisles, renderer, scene, camera, rack: id => openRack(racks.find(r => r.id === id)), stats: () => racks.map(r => [r.id, rackStats(r)]), shopping, observations, trace: (id, i, whole) => { const c = cables.find(k => k.id === id); if (trace.c !== c) openTrace(c); traceGo(i || 0, whole); } };
 })();

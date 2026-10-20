@@ -22,7 +22,7 @@ no vendors, no models, no addresses, no real site.
 | View | How |
 |---|---|
 | Room (default) | Clean view without cables. Levels **Room / Trunks / All**, plus the **Layers** panel with a counter per layer. |
-| Rack | Click a rack. Only that rack is shown, with the U ruler, item labels, free space marked in dashed green (“U17–U1 · 17U free”), its patch cords and trunks cut where they leave the rack, and the full elevation (U42 → U1). Use ‹ › or ←/→ to move between racks, and Front / Rear / Side to change the angle. |
+| Rack | Click a rack. Only that rack is shown, with the U ruler, item labels, free space marked in dashed green (“U17–U1 · 17U free”), its patch cords and trunks cut where they leave the rack, and the full elevation (U42 → U1). Use ‹ › or ←/→ to move between racks, and Front / Rear / Side to change the angle. The mouse wheel zooms toward the pointer, so you can get close to any U; right-drag moves the view. |
 | Row elevation | **Row 1 / Row 2**: every rack of the row seen from the front or rear with little perspective (FOV 24°), with used and free U below. |
 | Aisles | Eye-level camera in the cold or hot aisles. You can look at either row or along the aisle, and move with the slider or ←/→. |
 | Walk | First-person walk: from outside the door into the cold aisle, turning to each pair of facing racks with a placard (function, U used/free, devices, cables, items to order). Pause, ‹ ›, 1×/2×, “View this rack in detail” (Esc brings you back to the same point). |
@@ -30,7 +30,7 @@ no vendors, no models, no addresses, no real site.
 | Racks | Mini plan of the rows in physical order. Hovering a rack lights it up in 3D; clicking opens it; “View full row” opens the row elevation. |
 | Search | Device, type, rack or panel (`R1-04 P2`), with ↑↓ and Enter. Says when something is not in any rack. |
 | Inspect | Double-click an item: studio view with dimensions, Front / Isometric / Rear / Top, and clickable ports. |
-| Trace | Click a port, a cable in a card or search a cable id: the camera walks along it stop by stop, from one end through every panel port to the other (‹ ›, ← →, or **▶ Walk it** to play it), with the walked part in amber and the next hop in white. **Whole path in the room** stands back with every stop numbered. Racks and equipment the cable does not touch fade to glass. |
+| Trace | Click a port, a cable in a card or search a cable id: the camera walks along it stop by stop, from one end through every panel port to the other (‹ ›, ← →, or **▶ Walk it** to play it), with the walked part in amber, data packets running along it, and the next hop in white. **Whole path in the room** stands back with every stop numbered. Racks and equipment the cable does not touch fade to glass, and while walking every rack but the current one does. |
 | Occupancy / Shopping / Notes | Ports per rack and medium with the +30 % mark, a CSV shopping list, and rule-based observations. |
 | Power | Load per rack against its budget, the A and B feeds, and the estimated exhaust temperature. The **Heat map** layer colours the hot-aisle floor behind each rack. |
 | Fit | “Where does it fit?”: describe a device and every rack is checked for free U, patching ports and power. Racks glow green or amber, and a ghost of the device shows where it would go. |
