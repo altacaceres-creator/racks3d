@@ -30,7 +30,7 @@ no vendors, no models, no addresses, no real site.
 | Racks | Mini plan of the rows in physical order. Hovering a rack lights it up in 3D; clicking opens it; “View full row” opens the row elevation. |
 | Search | Device, type, rack or panel (`R1-04 P2`), with ↑↓ and Enter. Says when something is not in any rack. |
 | Inspect | Double-click an item: studio view with dimensions, Front / Isometric / Rear / Top, and clickable ports. |
-| Trace | Click a port: the whole cable path is highlighted and listed step by step. |
+| Trace | Click a port, a cable in a card or search a cable id: the camera walks along it stop by stop, from one end through every panel port to the other (‹ ›, ← →, or **▶ Walk it** to play it), with the walked part in amber and the next hop in white. **Whole path in the room** stands back with every stop numbered. Racks and equipment the cable does not touch fade to glass. |
 | Occupancy / Shopping / Notes | Ports per rack and medium with the +30 % mark, a CSV shopping list, and rule-based observations. |
 | Power | Load per rack against its budget, the A and B feeds, and the estimated exhaust temperature. The **Heat map** layer colours the hot-aisle floor behind each rack. |
 | Fit | “Where does it fit?”: describe a device and every rack is checked for free U, patching ports and power. Racks glow green or amber, and a ghost of the device shows where it would go. |
@@ -50,7 +50,8 @@ rack over its budget is flagged red, and one above 80 % amber; both appear in **
 
 The exhaust temperature is an **estimate**, not a measurement: the inlet is the cold-aisle temperature
 (`power.inletC`, 22 °C) and the fans are assumed to be sized for the budget (`power.cfmPerKw`, 120 CFM per
-kW), so ΔT = 3.16 × W ÷ CFM. It is enough to see which racks will run hot.
+kW), so ΔT (°C) = 1.76 × W ÷ CFM, the sensible-heat rule usually written ΔT (°F) = 3.16 × W ÷ CFM. A rack at
+its full budget runs about 15 °C over the inlet. It is enough to see which racks will run hot.
 
 | Power panel | Rack card |
 |---|---|
