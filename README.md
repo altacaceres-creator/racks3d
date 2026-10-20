@@ -22,7 +22,7 @@ no vendors, no models, no addresses, no real site.
 | View | How |
 |---|---|
 | Room (default) | Clean view without cables. Levels **Room / Trunks / All**, plus the **Layers** panel with a counter per layer. |
-| Rack | Click a rack. Only that rack is shown, with the U ruler, item labels, free space marked in dashed green (“U17–U1 · 17U free”), its patch cords and trunks cut where they leave the rack, and the full elevation (U42 → U1). Use ‹ › or ←/→ to move between racks, and Front / Rear / Side to change the angle. |
+| Rack | Click a rack. Only that rack is shown, with the U ruler, item labels, free space marked in dashed green (“U17–U1 · 17U free”), its patch cords and trunks cut where they leave the rack, and the full elevation (U42 → U1). Use ‹ › or ←/→ to move between racks, and Front / Rear / Side to change the angle. The mouse wheel zooms toward the pointer, so you can get close to any U; right-drag moves the view. |
 | Row elevation | **Row 1 / Row 2**: every rack of the row seen from the front or rear with little perspective (FOV 24°), with used and free U below. |
 | Aisles | Eye-level camera in the cold or hot aisles. You can look at either row or along the aisle, and move with the slider or ←/→. |
 | Walk | First-person walk: from outside the door into the cold aisle, turning to each pair of facing racks with a placard (function, U used/free, devices, cables, items to order). Pause, ‹ ›, 1×/2×, “View this rack in detail” (Esc brings you back to the same point). |
@@ -30,10 +30,11 @@ no vendors, no models, no addresses, no real site.
 | Racks | Mini plan of the rows in physical order. Hovering a rack lights it up in 3D; clicking opens it; “View full row” opens the row elevation. |
 | Search | Device, type, rack or panel (`R1-04 P2`), with ↑↓ and Enter. Says when something is not in any rack. |
 | Inspect | Double-click an item: studio view with dimensions, Front / Isometric / Rear / Top, and clickable ports. |
-| Trace | Click a port, a cable in a card or search a cable id: the camera walks along it stop by stop, from one end through every panel port to the other (‹ ›, ← →, or **▶ Walk it** to play it), with the walked part in amber and the next hop in white. **Whole path in the room** stands back with every stop numbered. Racks and equipment the cable does not touch fade to glass. |
+| Trace | Click a port, a cable in a card or search a cable id: the camera walks along it stop by stop, from one end through every panel port to the other (‹ ›, ← →, or **▶ Walk it** to play it), with the walked part in amber, data packets running along it, and the next hop in white. **Whole path in the room** stands back with every stop numbered. Racks and equipment the cable does not touch fade to glass, and while walking every rack but the current one does. |
 | Occupancy / Shopping / Notes | Ports per rack and medium with the +30 % mark, a CSV shopping list, and rule-based observations. |
 | Power | Load per rack against its budget, the A and B feeds, and the estimated exhaust temperature. The **Heat map** layer colours the hot-aisle floor behind each rack. |
 | Fit | “Where does it fit?”: describe a device and every rack is checked for free U, patching ports and power. Racks glow green or amber, and a ghost of the device shows where it would go. |
+| Route | Pick two devices and copper, MM or SM: it suggests the panel ports for a new cable, following trunks with a free port at both ends through the star centers, and **▶ Walk it in 3D** traces it like a real one. Nothing in the data changes. |
 | Import | Open your own inventory CSV or a JSON data file. It is checked first, kept in this browser only, and drawn instead of the sample. |
 
 ![Heat map: exhaust temperature behind each rack](docs/screenshots/heat-map.png)
@@ -74,6 +75,25 @@ a ghost of the device at its proposed U in each one; open a rack to see it in pl
 
 ![Racks that can take a 2U server, lit in the room](docs/screenshots/fit-room.png)
 
+## Route a new cable
+
+**Route** asks for two devices and a medium (copper, MM or SM fiber) and suggests where the new cable
+goes:
+
+- the next free port on each device, named like the ports already cabled (`1/0/n` and `1/1/n` on
+  switches and routers, `ethN` and `fibN` on servers),
+- in the first device's rack, a trunk panel (or cassette) whose trunk has the same port free at both ends,
+- the fewest trunks to the second device's rack, crossing over only in star centers,
+- a patch cord at each end and a cross-connect in each star center on the way.
+
+If no trunks with a free port join the two racks, it says so. **▶ Walk it in 3D** walks the suggested
+cable stop by stop like any other; it exists only on screen until you add it to your data.
+
+## Light or dark
+
+The **☀ / ☾** button at the end of the top bar switches the page between the dark and a light theme. The
+choice is remembered in this browser.
+
 ## Import your own data
 
 **Import** opens a file from your computer: nothing is uploaded, and the data is kept in this browser's
@@ -108,7 +128,7 @@ python3 tools/check_public.py   # the privacy check
 ```
 
 `test/plan.test.mjs` checks that the sample has no errors or warnings, that every kind of mistake is caught
-by the validation, and the power, fit and CSV helpers on small hand-made racks. A GitHub Actions workflow
+by the validation, and the power, fit, route and CSV helpers on small hand-made racks. A GitHub Actions workflow
 (`.github/workflows/checks.yml`) runs both on every push and pull request.
 
 ## Publish it on GitHub Pages
