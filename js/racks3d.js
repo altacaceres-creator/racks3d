@@ -1218,7 +1218,9 @@
     racks.forEach(r => {
       const o = rackObjs[r.id];
       o.group.visible = inRack ? r === state.rack : isRow ? r._row === state.row : true;
-      const touched = !tr || tr.racks.has(r);
+      // walking: only the rack of the current stop stays solid, so no other rack hides it
+      const at = tr && !tr.whole && tr.steps[tr.step] && tr.steps[tr.step].E;
+      const touched = !tr || (at && at.rack ? at.rack === r : tr.racks.has(r));
       o.bodyMat.transparent = !touched; o.bodyMat.opacity = touched ? 1 : 0.1; o.bodyMat.depthWrite = touched;
       o.items.forEach(mesh => ghostItem(mesh, !!tr && !tr.items.has(mesh.userData.item)));
       o.pdus.forEach(pm => { pm.visible = touched; });
@@ -1783,8 +1785,10 @@
   function stepCam(st) {
     const p = st.at, E = st.E;
     if (E && E.rack) {
+      // stand in the aisle the stop faces, never past it: farther back is inside the next row
       const r = E.rack, lx = (p.x - r._x) * r._sgn, lz = (p.z - r._front) * r._sgn, front = lz > -r.d / 2;
-      return { pos: toW(r, v(lx * 0.4 + (front ? 0.45 : -0.45), Math.min(RH + 0.3, p.y + 0.4), front ? 1.4 : -r.d - 1.4)), target: p.clone(), fov: 50 };
+      const z = front ? ROOM.coldAisle - 0.15 : -(r._row.maxD + ROOM.hotAisle - 0.15);
+      return { pos: toW(r, v(lx * 0.4 + (front ? 0.3 : -0.3), Math.min(RH + 0.2, p.y + 0.35), z)), target: p.clone(), fov: 62 };
     }
     const to = v((X0 + X1) / 2 - p.x, 0, (RZ0 + RZ1) / 2 - p.z).normalize();
     return { pos: p.clone().addScaledVector(to, 1.8).add(v(0, 0.3, 0)), target: p.clone(), fov: 50 };
@@ -1818,6 +1822,7 @@
       const m = new THREE.Mesh(new THREE.SphereGeometry(cur ? 0.028 : 0.016, 14, 10), cur ? traceMats.now : seen ? traceMats.done : traceMats.next);
       m.position.copy(st.at);
       g.add(m);
+      if (cur) { const x = new THREE.Mesh(m.geometry, traceMats.xray); x.position.copy(st.at); x.renderOrder = 15; g.add(x); }
       if (trace.whole || cur) {
         const lab = css2d('<b>' + (i + 1) + '</b>' + (cur ? ' ' + esc(st.text.t) : ''), 'trace-label' + (cur ? ' now' : ''));
         lab.position.copy(st.at).add(v(0, 0.06, 0));
@@ -1839,6 +1844,7 @@
     trace.whole = !!whole;
     trace.t = 0;
     drawTrace();
+    applyVisibility();
     traceBar();
     showCableCard(trace.c);
     const cam = trace.whole ? wholeCam() : stepCam(trace.steps[trace.step]);
@@ -2760,5 +2766,5 @@
   loop();
 
   // Small read-only handle for debugging from the console.
-  window.racks3d = { state, rows, aisles, renderer, scene, camera, stats: () => racks.map(r => [r.id, rackStats(r)]), shopping, observations };
+  window.racks3d = { state, rows, aisles, renderer, scene, camera, stats: () => racks.map(r => [r.id, rackStats(r)]), shopping, observations, trace: (id, i, whole) => { const c = cables.find(k => k.id === id); if (trace.c !== c) openTrace(c); traceGo(i || 0, whole); } };
 })();
