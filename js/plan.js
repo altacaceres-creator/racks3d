@@ -63,10 +63,13 @@
     return use;
   }
   // Free patching ports in a rack: copper on its trunk UTP panels, fiber per medium on its
-  // cassettes, and the empty cassette slots of its trays.
+  // cassettes, and the empty cassette slots of its trays. In a star center the trunked panels
+  // are the far ends of other racks' trunks, not ports a device in this rack can use.
   function freePorts(rack, data, use) {
     use = use || portUse(data);
     const out = { copper: 0, mm: 0, sm: 0, emptySlots: 0 };
+    const star = isStar(rack), farEnd = new Set();
+    if (star) (data.trunks || []).forEach(t => { farEnd.add(t.a); farEnd.add(t.b); });
     let p = 0, f = 0;
     (rack.items || []).forEach(it => {
       if (!it) return;
@@ -74,6 +77,7 @@
         p++;
         if (it.role && it.role !== 'trunk') return;
         const key = rack.id + '#' + (it.id || 'P' + p);
+        if (farEnd.has(key)) return;
         for (let n = 1; n <= UTP_PORTS; n++) if (!use[key + ':' + n]) out.copper++;
       }
       if (it.kind === 'lc') {
@@ -82,6 +86,7 @@
         for (let ci = 0; ci < SLOTS; ci++) {
           const c = (it.cassettes || [])[ci];
           if (!c) { out.emptySlots++; continue; }
+          if (farEnd.has(key + '.C' + (ci + 1))) continue;
           const m = c.medium === 'sm' ? 'sm' : 'mm';
           for (let k = 1; k <= CASS_PORTS; k++) if (!use[key + ':' + (ci * CASS_PORTS + k)]) out[m]++;
         }

@@ -1876,6 +1876,7 @@
     cardActions = o.actions || [];
     const el = $('#card');
     el.innerHTML = '<button class="close" data-close-card aria-label="Close">×</button>' +
+      '<button class="close fold" data-fold-card aria-label="Fold the card">▾</button>' +
       '<span class="badge ' + (o.badgeCls || '') + '">' + esc(o.badge) + '</span>' + (o.extraBadges || '') +
       '<h3>' + esc(o.title) + '</h3>' +
       (o.rows ? '<table>' + o.rows.filter(Boolean).map(r => '<tr><td>' + esc(r[0]) + '</td><td>' + r[1] + '</td></tr>').join('') + '</table>' : '') +
@@ -1890,6 +1891,7 @@
   function hideCard() { $('#card').hidden = true; }
   $('#card').addEventListener('click', e => {
     if (e.target.closest('[data-close-card]')) { if (state.mode === 'trace') back(); else hideCard(); return; }
+    if (e.target.closest('[data-fold-card]') || (e.target.closest('h3') && $('#card').classList.contains('folded'))) { $('#card').classList.toggle('folded'); return; }
     const st = e.target.closest('[data-step]');
     if (st && state.mode === 'trace') { trace.playing = false; traceGo(+st.dataset.step); return; }
     const ca = e.target.closest('[data-ca]');
@@ -2286,6 +2288,7 @@
     });
     const act = cables.filter(c => c.kind === 'active');
     if (act.length) out.push({ sev: 'info', text: act.length + ' active cable(s) cannot pass through patch panels; they are laid in the tray with a fixed length.', sub: act.map(c => c.a.item + ' ↔ ' + c.b.item).join(' · ') });
+    if (!cables.length) out.push({ sev: 'info', text: 'This data has no cables or trunks, so there is nothing to trace and the port occupancy reads empty.', sub: DATA.meta && DATA.meta.imported ? 'An inventory CSV holds racks and equipment only; import a JSON file to bring cables in.' : '' });
     const pend = cables.filter(c => c.status === 'pending');
     if (pend.length) out.push({ sev: 'bad', text: pend.length + ' pending cable(s) without a confirmed port.', sub: pend.map(c => c.id + ' ' + cableSummary(c)).join(' · ') });
     racks.forEach(r => {
@@ -2545,6 +2548,8 @@
         const list = (xs, cls) => '<ul class="notes">' + xs.slice(0, 30).map(x => '<li class="' + cls + '"><span class="ico">!</span><div>' + esc(x) + '</div></li>').join('') + (xs.length > 30 ? '<li class="' + cls + '"><span class="ico">…</span><div>and ' + (xs.length - 30) + ' more</div></li>' : '') + '</ul>';
         $('#importResult').innerHTML = '<h3>' + esc(f.name) + '</h3>' +
           (data ? '<p class="sub">' + data.racks.length + ' racks · ' + devices + ' devices · ' + ((data.cables || []).length) + ' cables</p>' : '') +
+          (data && !(data.cables || []).length ? '<p class="note-line">No cables or trunks in this file' + (/\.csv$/i.test(f.name) ? ' (an inventory CSV only holds racks and equipment)' : '') +
+            ': racks, power, heat and Fit will work, but there will be nothing to trace and the port occupancy will read empty.</p>' : '') +
           (all.length ? '<p class="note-line bad">' + all.length + ' problem(s) to fix in the file before it can be opened:</p>' + list(all, 'bad')
             : '<div class="actions" style="margin:0 0 10px"><button class="btn primary" data-k="open">Open it</button></div>') +
           (v.warnings.length ? '<p class="note-line">' + v.warnings.length + ' warning(s), it opens anyway:</p>' + list(v.warnings, 'warn') : '');
@@ -2726,6 +2731,8 @@
     const tb = $('#topbar').getBoundingClientRect();
     document.documentElement.style.setProperty('--top', Math.round(tb.bottom + 12) + 'px');
   }
+  // the card sits above the mode bar on narrow screens, whatever its height (0 while it is hidden)
+  new ResizeObserver(() => document.documentElement.style.setProperty('--mb', Math.round($('#modebar').getBoundingClientRect().height) + 'px')).observe($('#modebar'));
   fitPanels();
   window.addEventListener('resize', () => {
     fitPanels();

@@ -248,6 +248,9 @@ kbd {
   line-height: 1;
 }
 .close:hover { border-color: var(--hover); }
+/* fold the card down to its title: only on narrow screens, where it covers the view */
+#card .fold { display: none; right: 38px; }
+#card.folded .fold { transform: rotate(180deg); }
 .cables { list-style: none; margin: 0; padding: 0; }
 .cables li {
   display: flex;
@@ -570,10 +573,18 @@ table.grid tr:hover td { background: rgba(255, 255, 255, .02); }
   #search { min-width: 150px; }
 }
 @media (max-width: 760px) {
-  #topbar { gap: 6px; }
+  /* the top bar: logo, levels and search on one row, the tools on a second row that scrolls sideways */
+  #topbar { gap: 6px 8px; padding: 6px 8px; }
   .brand { min-width: 0; }
-  .brand small { display: none; }
-  #search { flex: 1 1 100%; order: 5; }
+  .brand > div { display: none; }
+  #search { order: 2; flex: 1 1 110px; min-width: 0; max-width: none; }
+  #views { order: 3; flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  #views::-webkit-scrollbar { display: none; }
+  #views > *, #rowButtons > * { flex: none; }
+  #rowButtons { display: flex; gap: 4px; flex: none; }
+  /* in the room only the rack ids: there is no room for more */
+  .rack-label small, .rack-label .tag, .rack-label br, .wall-label, .portal-label { display: none; }
+  .rack-label b { font-size: 10px; }
   #layers {
     top: auto;
     bottom: calc(10px + env(safe-area-inset-bottom, 0px));
@@ -582,16 +593,25 @@ table.grid tr:hover td { background: rgba(255, 255, 255, .02); }
     max-height: 40vh;
   }
   #layers:not(.collapsed) { right: 10px; z-index: 16; }
-  #card, #elev {
+  /* the card is a sheet above the mode bar, and can be folded down to its title */
+  #card {
     top: auto;
     left: 10px;
     right: 10px;
     width: auto;
-    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-    max-height: 42vh;
+    bottom: calc(var(--mb, 0px) + 16px + env(safe-area-inset-bottom, 0px));
+    max-height: 38vh;
   }
-  #elev { max-height: 30vh; }
-  #modebar { bottom: auto; top: var(--top); }
+  #card .fold { display: block; }
+  #card.folded > :not(.close):not(.fold):not(.badge):not(h3) { display: none; }
+  #card.folded h3 { margin-bottom: 0; }
+  /* the rack's item list would cover the rack; the card and a tap on an item say the same */
+  #elev { display: none; }
+  /* the mode bar stays at the bottom, compact: its title on a line of its own */
+  #modebar { gap: 6px; padding: 6px 8px; width: calc(100vw - 20px); }
+  #modebar .title { flex: 1 1 100%; order: -1; text-align: center; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; }
+  #modebar .btn, #modebar .seg button { padding: 4px 8px; font-size: 12px; }
+  #modebar kbd { display: none; }
   #placard { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
   #placard .kv { grid-template-columns: repeat(2, 1fr); }
   #hint { display: none; }

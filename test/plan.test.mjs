@@ -105,6 +105,21 @@ test('where does it fit: missing ports become panels or cassettes to add, and po
   assert.match(hot.why.join(), /exceed/);
 });
 
+test('where does it fit: a star center does not offer the far ends of other racks\' trunks', () => {
+  const stars = sample.racks.filter((r) => (Array.isArray(r.starCenter) ? r.starCenter.length : r.starCenter));
+  assert.ok(stars.length);
+  const ends = new Set(sample.trunks.flatMap((t) => [t.a, t.b]));
+  for (const r of stars) {
+    // only panels that are not a trunk end can count, so a star center full of trunk ends offers next to nothing
+    const own = r.items.filter((it) => it && it.kind === 'utp' && (!it.role || it.role === 'trunk') && !ends.has(`${r.id}#${it.id}`)).length;
+    assert.ok(P.freePorts(r, sample).copper <= own * P.UTP_PORTS, `${r.id}: ${P.freePorts(r, sample).copper} free copper ports`);
+  }
+  const star = { id: 'S1', starCenter: ['copper'], items: [{ kind: 'utp', id: 'P1', role: 'trunk' }, { kind: 'utp', id: 'P2', role: 'trunk' }] };
+  const data = { racks: [star, { id: 'A1', items: [{ kind: 'utp', id: 'P1', role: 'trunk' }] }], trunks: [{ medium: 'copper', a: 'A1#P1', b: 'S1#P1' }], cables: [] };
+  assert.equal(P.freePorts(star, data).copper, P.UTP_PORTS, 'only the untrunked P2');
+  assert.equal(P.freePorts(data.racks[1], data).copper, P.UTP_PORTS, 'the near end of a trunk is where devices patch in');
+});
+
 test('CSV: the sample goes out and comes back with every item in the same U', () => {
   const { data, errors } = P.fromCsv(P.toCsv(sample), 'round trip');
   assert.deepEqual(errors, []);
@@ -138,10 +153,12 @@ test('CSV: a hand-written inventory is read, and mistakes are reported by line',
   assert.match(P.fromCsv('name,size\nx,1').errors.join(), /Missing column "rack"/);
 });
 
-test('where does it fit: star centers come after the other racks that fit', () => {
+test('where does it fit: star centers come after the other racks with the same result', () => {
   const res = P.findFit(sample, { u: 1, copper: 1, watts: 100 });
-  const fits = res.filter((x) => x.status === 'fits');
   const star = (r) => (Array.isArray(r.starCenter) ? r.starCenter.length : !!r.starCenter);
-  const firstStar = fits.findIndex((x) => star(x.rack));
-  assert.ok(firstStar > 0 && fits.slice(firstStar).every((x) => star(x.rack)), fits.map((x) => x.rack.id).join(' '));
+  assert.ok(res.some((x) => star(x.rack)));
+  for (const st of ['fits', 'add', 'no']) {
+    const group = res.filter((x) => x.status === st), firstStar = group.findIndex((x) => star(x.rack));
+    if (firstStar >= 0) assert.ok(group.slice(firstStar).every((x) => star(x.rack)), `${st}: ${group.map((x) => x.rack.id).join(' ')}`);
+  }
 });
