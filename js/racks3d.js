@@ -1221,7 +1221,9 @@
       // walking: only the rack of the current stop stays solid, so no other rack hides it
       const at = tr && !tr.whole && tr.steps[tr.step] && tr.steps[tr.step].E;
       const touched = !tr || (at && at.rack ? at.rack === r : tr.racks.has(r));
-      o.bodyMat.transparent = !touched; o.bodyMat.opacity = touched ? 1 : 0.1; o.bodyMat.depthWrite = touched;
+      // three.js bakes "opaque" into the shader, so a change of transparency needs a recompile
+      if (o.bodyMat.transparent === touched) { o.bodyMat.transparent = !touched; o.bodyMat.needsUpdate = true; }
+      o.bodyMat.opacity = touched ? 1 : 0.1; o.bodyMat.depthWrite = touched;
       o.items.forEach(mesh => ghostItem(mesh, !!tr && !tr.items.has(mesh.userData.item)));
       o.pdus.forEach(pm => { pm.visible = touched; });
       const focus = (m === 'walk' && walk.rack === r);
