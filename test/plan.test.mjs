@@ -162,3 +162,42 @@ test('where does it fit: star centers come after the other racks with the same r
     if (firstStar >= 0) assert.ok(group.slice(firstStar).every((x) => star(x.rack)), `${st}: ${group.map((x) => x.rack.id).join(' ')}`);
   }
 });
+
+test('route: a new cable between two devices follows free trunk ports and validates', () => {
+  const devs = sample.racks.flatMap((r) => r.items.filter((it) => it && it.kind === 'device').map((it) => ({ r, it })));
+  const dev = (label) => devs.find((d) => d.it.label === label);
+  const cases = [
+    [dev('SW-EDGE-01'), dev('SW-LAB-01'), 'copper', 3],     // own panel → star R1-08 → star R2-01 → far rack
+    [dev('SW-EDGE-01'), dev('SW-ACCESS-01'), 'copper', 2],
+    [dev('RTR-CORE-01'), dev('RTR-EDGE-02'), 'sm', 2],
+  ];
+  for (const [a, b, medium, trunks] of cases) {
+    const res = P.suggestRoute(sample, a.it.label, b.it.label, medium);
+    assert.ok(res.ok, `${a.it.label} → ${b.it.label}: ${res.why.join(' ')}`);
+    assert.equal(res.hops.length, trunks * 2, res.hops.join(' '));
+    assert.ok(res.hops[0].startsWith(a.r.id + '#') && res.hops.at(-1).startsWith(b.r.id + '#'));
+    const d = clone(sample);
+    d.cables.push({ id: 'NEW', medium, kind: 'structured', a: res.a, b: res.b, hops: res.hops, status: 'proposed' });
+    const v = P.validate(d);
+    assert.deepEqual(v.errors, [], res.hops.join(' '));
+    assert.deepEqual(v.warnings, [], res.hops.join(' '));
+    const taken = (e) => sample.cables.some((c) => [c.a, c.b].some((x) => x.item === e.item && x.port === e.port));
+    assert.ok(!taken(res.a) && !taken(res.b), 'free device ports');
+  }
+});
+
+test('route: same rack is a patch cord, and a missing trunk path says why', () => {
+  const data = {
+    racks: [{ id: 'A', items: [{ kind: 'device', label: 'X', type: 'server', ports: 2 }, { kind: 'device', label: 'Z', type: 'switch', ports: 24 }] },
+      { id: 'B', items: [{ kind: 'device', label: 'Y', type: 'server', ports: 2 }] }],
+    rows: { 1: ['A', 'B'] }, trunks: [], cables: [],
+  };
+  const same = P.suggestRoute(data, 'X', 'Z', 'copper');
+  assert.ok(same.ok);
+  assert.deepEqual(same.hops, []);
+  assert.deepEqual([same.a.port, same.b.port], ['eth0', '1/0/1']);
+  const none = P.suggestRoute(data, 'X', 'Y', 'copper');
+  assert.equal(none.ok, false);
+  assert.match(none.why.join(), /No copper trunks/);
+  assert.match(P.suggestRoute(data, 'X', 'Nope', 'copper').why.join(), /not a device/);
+});

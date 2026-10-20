@@ -174,6 +174,86 @@
     }).sort((a, b) => RANK[a.status] - RANK[b.status] || isStar(a.rack) - isStar(b.rack) || b.headroom - a.headroom);
   }
 
+  // ------------------------------------------------------------------ route a new cable
+  // Suggests the hops for a new cable between two devices: patch into a trunk panel in the
+  // first device's rack, follow trunks with the same port free at both ends (crossing
+  // connect in a star center), and patch out to the second device. Fewest trunks first.
+  // Returns { ok, medium, a, b, hops, legs, why }.
+  function deviceRack(data, label) {
+    for (const r of data.racks || []) for (const it of r.items || []) if (it && it.kind === 'device' && it.label === label) return { rack: r, it };
+    return null;
+  }
+  // the next free port of a device on that medium, named like the ports already cabled
+  function freeDevicePort(data, label, it, fiber) {
+    const used = new Set();
+    (data.cables || []).forEach(c => [c.a, c.b].forEach(e => { if (e && e.item === label) used.add(String(e.port)); }));
+    const sw = SWITCHLIKE.has(it.type);
+    const name = k => sw ? (fiber ? '1/1/' : '1/0/') + k : (fiber ? 'fib' : 'eth') + (k - 1);
+    const max = fiber ? (sw ? it.uplinks || 0 : Math.max(2, it.uplinks || 0)) : Math.max(sw ? it.ports || 0 : 2, it.ports || 0);
+    for (let k = 1; k <= max; k++) if (!used.has(name(k))) return name(k);
+    return null;
+  }
+  function suggestRoute(data, fromLabel, toLabel, medium) {
+    medium = medium === 'mm' || medium === 'sm' ? medium : 'copper';
+    const fiber = medium !== 'copper', out = { ok: false, medium, hops: [], legs: [], why: [] };
+    const A = deviceRack(data, fromLabel), B = deviceRack(data, toLabel);
+    if (!A || !B) { out.why.push((!A ? fromLabel : toLabel) + ' is not a device.'); return out; }
+    if (A.it === B.it) { out.why.push('Pick two different devices.'); return out; }
+    const pa = freeDevicePort(data, fromLabel, A.it, fiber), pb = freeDevicePort(data, toLabel, B.it, fiber);
+    if (!pa) out.why.push(fromLabel + ' has no free ' + (fiber ? 'fiber' : 'copper') + ' port.');
+    if (!pb) out.why.push(toLabel + ' has no free ' + (fiber ? 'fiber' : 'copper') + ' port.');
+    out.a = { item: fromLabel, port: pa || '?' }; out.b = { item: toLabel, port: pb || '?' };
+    if (A.rack === B.rack) {
+      out.ok = !out.why.length;
+      out.legs.push({ type: 'patch', text: 'patch cord inside ' + A.rack.id });
+      return out;
+    }
+    // the trunks of this medium, each end with its panel and the port numbers it carries
+    const P = panels(data), use = portUse(data);
+    const end = ref => {
+      const m = /^(.*#F\d+)\.C(\d+)$/.exec(ref);
+      if (m) {
+        const p = P[m[1]], ci = +m[2] - 1, cas = p && (p.it.cassettes || [])[ci];
+        return cas ? { rack: p.rack, ports: k => m[1] + ':' + (ci * CASS_PORTS + k), n: CASS_PORTS, medium: cas.medium === 'sm' ? 'sm' : 'mm' } : null;
+      }
+      const p = P[ref];
+      return p && p.it.kind === 'utp' && (!p.it.role || p.it.role === 'trunk') ? { rack: p.rack, ports: k => ref + ':' + k, n: UTP_PORTS, medium: 'copper' } : null;
+    };
+    const edges = [];
+    (data.trunks || []).forEach(t => {
+      const a = end(t.a), b = end(t.b);
+      if (!a || !b || a.medium !== medium || b.medium !== medium) return;
+      // first port number free at both ends
+      let k = 0;
+      for (let i = 1; i <= Math.min(a.n, b.n); i++) if (!use[a.ports(i)] && !use[b.ports(i)]) { k = i; break; }
+      if (!k) return;
+      edges.push({ from: a.rack, to: b.rack, hops: [a.ports(k), b.ports(k)], free: k });
+      edges.push({ from: b.rack, to: a.rack, hops: [b.ports(k), a.ports(k)], free: k });
+    });
+    // breadth first over racks, fewest trunks first
+    const prev = new Map([[A.rack, null]]), queue = [A.rack];
+    while (queue.length && !prev.has(B.rack)) {
+      const r = queue.shift();
+      if (r !== A.rack && !isStar(r)) continue;        // cross-connects happen in star centers only
+      edges.filter(e => e.from === r && !prev.has(e.to)).forEach(e => { prev.set(e.to, e); queue.push(e.to); });
+    }
+    if (!prev.has(B.rack)) {
+      out.why.push('No ' + (fiber ? medium.toUpperCase() + ' fiber' : 'copper') + ' trunks with a free port join ' + A.rack.id + ' and ' + B.rack.id + '.');
+      return out;
+    }
+    const path = [];
+    for (let e = prev.get(B.rack); e; e = prev.get(e.from)) path.unshift(e);
+    out.legs.push({ type: 'patch', text: 'patch cord in ' + A.rack.id });
+    path.forEach((e, i) => {
+      if (i) out.legs.push({ type: 'cross', text: 'cross-connect in ' + e.from.id });
+      out.legs.push({ type: 'trunk', text: 'trunk ' + e.from.id + ' → ' + e.to.id });
+      out.hops.push(...e.hops);
+    });
+    out.legs.push({ type: 'patch', text: 'patch cord in ' + B.rack.id });
+    out.ok = !out.why.length;
+    return out;
+  }
+
   // ------------------------------------------------------------------ validation
   // Checks a data set before it is drawn: anything in `errors` would draw wrongly or break
   // a trace; `warnings` are worth a look but harmless.
@@ -373,5 +453,5 @@
     return { data, errors };
   }
 
-  return { RACK_U, UTP_PORTS, CASS_PORTS, SLOTS, TYPES, TYPE_WATTS, POWER_DEFAULTS, layout, freeRuns, portUse, freePorts, watts, rackPower, findFit, validate, toCsv, fromCsv, parseCsvText, SWITCHLIKE };
+  return { RACK_U, UTP_PORTS, CASS_PORTS, SLOTS, TYPES, TYPE_WATTS, POWER_DEFAULTS, layout, freeRuns, portUse, freePorts, watts, rackPower, findFit, suggestRoute, validate, toCsv, fromCsv, parseCsvText, SWITCHLIKE };
 });

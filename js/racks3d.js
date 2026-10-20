@@ -353,14 +353,25 @@
   const extMeshes = [];
   let doorPivot = null;
 
+  // the room's own colours per theme: background and fog, floor tile (base, dots, joint), walls
+  const THEMES = {
+    dark: { bg: C.bg, tile: ['#15172c', '#1a1d36', '#2a2e52'], wall: 0x1a1d3a, edge: 0x3a3e6a },
+    light: { bg: '#dfe3ee', tile: ['#c9cedd', '#bcc2d4', '#a9b0c6'], wall: 0xaab2cc, edge: 0x7d86a8 },
+  };
+  const roomLook = {};
+  function paintFloor(cv, tile) {
+    const x = cv.getContext('2d');
+    x.fillStyle = tile[0]; x.fillRect(0, 0, 256, 256);
+    x.fillStyle = tile[1];
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) { x.beginPath(); x.arc(24 + i * 30, 24 + j * 30, 3, 0, 7); x.fill(); }
+    x.strokeStyle = tile[2]; x.lineWidth = 5; x.strokeRect(2.5, 2.5, 251, 251);
+  }
+
   (function buildRoom() {
     const W = RX1 - RX0, D = RZ1 - RZ0;
-    const cv = mkCanvas(256, 256), x = cv.getContext('2d');
-    x.fillStyle = '#15172c'; x.fillRect(0, 0, 256, 256);
-    x.fillStyle = '#1a1d36';
-    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) { x.beginPath(); x.arc(24 + i * 30, 24 + j * 30, 3, 0, 7); x.fill(); }
-    x.strokeStyle = '#2a2e52'; x.lineWidth = 5; x.strokeRect(2.5, 2.5, 251, 251);
-    const tex = canvasTex(cv);
+    const cv = roomLook.cv = mkCanvas(256, 256);
+    paintFloor(cv, THEMES.dark.tile);
+    const tex = roomLook.tex = canvasTex(cv);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(W / 0.6, D / 0.6);
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, metalness: 0.1 }));
@@ -376,8 +387,8 @@
       roomGroup.add(m);
     });
 
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1a1d3a, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false, roughness: 0.9 });
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x3a3e6a });
+    const wallMat = roomLook.wall = new THREE.MeshStandardMaterial({ color: THEMES.dark.wall, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false, roughness: 0.9 });
+    const edgeMat = roomLook.edge = new THREE.LineBasicMaterial({ color: THEMES.dark.edge });
     const wall = (x0, z0, x1, z1, h, y0) => {
       h = h || WALL_H; y0 = y0 || 0;
       const geo = new THREE.BoxGeometry(Math.hypot(x1 - x0, z1 - z0), h, 0.08);
@@ -1830,6 +1841,8 @@
     trace.group = null; trace.flow = null;
   }
   const PACKET_GAP = 0.3, PACKET_SPEED = 0.7;   // metres between packets, metres per second
+  // packets take the colour of the medium; SM's own yellow would vanish on the amber trace
+  const PACKET_COLOR = { cu: C.copper, mm: C.mm, sm: '#ffffff' };
   const REDUCED_MOTION = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
   function flowLane(pts) {
     const cum = [0];
@@ -1868,9 +1881,10 @@
     const total = sum(lanes, l => l.len), n = Math.min(400, Math.floor(total / PACKET_GAP));
     trace.flow = null;
     if (n && !REDUCED_MOTION) {
-      const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.011, 8, 6), traceMats.packet, n);
+      const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.013, 8, 6), traceMats.packet, n);
       mesh.renderOrder = 16; mesh.frustumCulled = false;
       g.add(mesh);
+      traceMats.packet.color.set(PACKET_COLOR[mkey(c.medium)]);
       trace.flow = { lanes, total, mesh, n };
       moveFlow(0);
     }
@@ -2463,6 +2477,55 @@
     if (x.status === 'add') return '<span style="color:var(--new)">Fits once you add</span> ' + esc(x.add.join(' + '));
     return '<span style="color:var(--muted)">Does not fit:</span> ' + esc(x.why.join('; '));
   }
+  // Route a new cable: pick two devices and a medium, get the panel ports to use, and walk it in 3D
+  const route = { from: '', to: '', medium: 'copper', res: null };
+  function showRoute() {
+    const field = (label, html) => '<label class="field"><span>' + label + '</span>' + html + '</label>';
+    const devIn = k => '<input data-f="' + k + '" list="routeDevs" value="' + esc(route[k]) + '" placeholder="Type or pick a device" autocomplete="off" spellcheck="false">';
+    openModal('<h2>Route a new cable</h2><p class="sub">Pick two devices. The route patches into a trunk panel in the first device’s rack, follows trunks with a free port at both ends ' +
+      '(crossing over in a star center), and patches out to the second device. It uses the next free device ports and changes nothing in the data.</p>' +
+      '<datalist id="routeDevs">' + Object.keys(devByLabel).sort().map(l => '<option value="' + esc(l) + '">' + esc(devByLabel[l]._rack.id) + '</option>').join('') + '</datalist>' +
+      '<div class="fit-form">' + field('From', devIn('from')) + field('To', devIn('to')) +
+      field('Medium', '<select data-f="medium">' + ['copper', 'mm', 'sm'].map(m => '<option value="' + m + '"' + (m === route.medium ? ' selected' : '') + '>' + MEDIUM_NAME[m] + '</option>').join('') + '</select>') +
+      '</div><div id="routeResult"></div>',
+      e => { if (e.target.closest('[data-walk]') && route.res && route.res.ok) { closeModal(); walkRoute(route.res); } });
+    const form = $('.fit-form');
+    route.key = null;
+    const render = () => {
+      const g = k => $('[data-f="' + k + '"]', form).value.trim();
+      // a blur fires change too; redrawing then would swap the button out from under the click
+      const key = g('from') + '|' + g('to') + '|' + g('medium');
+      if (key === route.key) return;
+      route.key = key; route.from = g('from'); route.to = g('to'); route.medium = g('medium');
+      const box = $('#routeResult');
+      route.res = null;
+      if (!devByLabel[route.from] || !devByLabel[route.to]) { box.innerHTML = '<p class="note-line">Choose two devices from the list.</p>'; return; }
+      const res = route.res = PLAN.suggestRoute(DATA, route.from, route.to, route.medium);
+      if (!res.ok) { box.innerHTML = '<p class="note-line bad">' + res.why.map(esc).join('<br>') + '</p>'; return; }
+      const refs = [res.a].concat(res.hops, [res.b]);
+      const legs = [];
+      for (let i = 0; i < refs.length - 1; i++) {
+        const P = refs[i], Q = refs[i + 1];
+        const rk = x => typeof x === 'string' ? x.split('#')[0] : devByLabel[x.item]._rack.id;
+        legs.push(rk(P) !== rk(Q) ? 'trunk (' + MEDIUM_NAME[res.medium].toLowerCase() + ')' : typeof P === 'string' && typeof Q === 'string' ? 'cross-connect (patch cord)' : 'patch cord');
+      }
+      box.innerHTML = '<div class="kpis"><div class="kpi"><b style="color:var(--free)">' + (res.hops.length / 2) + '</b><small>Trunks</small></div>' +
+        '<div class="kpi"><b>' + res.hops.length + '</b><small>Panel ports</small></div>' +
+        '<div class="kpi"><b>' + (legs.length - res.hops.length / 2) + '</b><small>Patch cords to lay</small></div></div>' +
+        '<ol class="steps">' + refs.map((r, i) => { const t = endpointText(r); return '<li><b>' + esc(t.t) + '</b><br><small style="color:var(--muted)">' + esc(t.sub) + '</small></li>' + (legs[i] ? '<li class="link">' + esc(legs[i]) + '</li>' : ''); }).join('') + '</ol>' +
+        '<div class="actions"><button class="btn primary" data-walk>▶ Walk it in 3D</button></div>';
+    };
+    form.addEventListener('input', render);
+    form.addEventListener('change', render);
+    render();
+  }
+  // a cable that exists only on screen, traced like any other
+  function walkRoute(res) {
+    const c = { id: 'new (suggested)', medium: res.medium, kind: 'structured', status: 'proposed', a: res.a, b: res.b, hops: res.hops.slice(), suggested: true };
+    c._pieces = cablePieces(c);
+    c._len = sum(c._pieces, p => polyLen(p.pts));
+    openTrace(c);
+  }
   function showFit() {
     const n = fit.need || Object.assign({ preset: 'server2', watts: PLAN.watts({ kind: 'device', type: 'server', u: 2 }) }, FIT_PRESETS[1][2]);
     const field = (k, label, html) => '<label class="field"><span>' + label + '</span>' + html + '</label>';
@@ -2749,11 +2812,32 @@
     else if (a === 'occupancy') showOccupancy();
     else if (a === 'power') showPower();
     else if (a === 'fit') showFit();
+    else if (a === 'route') showRoute();
     else if (a === 'import') showImport();
     else if (a === 'shopping') showShopping();
     else if (a === 'notes') showNotes();
   });
   if (DATA.meta && DATA.meta.title) $('#dataset').textContent = DATA.meta.title;
+
+  // light / dark, remembered in this browser
+  function setTheme(name) {
+    const T = THEMES[name] ? THEMES[name] : THEMES.dark;
+    name = THEMES[name] ? name : 'dark';
+    document.documentElement.dataset.theme = name;
+    scene.background.set(T.bg);
+    scene.fog.color.set(T.bg);
+    paintFloor(roomLook.cv, T.tile);
+    roomLook.tex.needsUpdate = true;
+    roomLook.wall.color.set(T.wall);
+    roomLook.edge.color.set(T.edge);
+    const b = $('#theme');
+    b.textContent = name === 'dark' ? '☀' : '☾';
+    b.title = name === 'dark' ? 'Light theme' : 'Dark theme';
+    try { localStorage.setItem('racks3d.theme', name); } catch (e) { /* not remembered */ }
+    invalidate();
+  }
+  $('#theme').onclick = () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+  setTheme((() => { try { return localStorage.getItem('racks3d.theme'); } catch (e) { return null; } })() || 'dark');
 
   function updateHint() {
     const h = {
