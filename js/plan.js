@@ -104,13 +104,14 @@
     return PER_U.has(it.type) ? w * Math.max(1, it.u || 1) : w;
   }
   // Load against the rack's budget, split over its A and B feeds, and an estimate of the
-  // exhaust temperature: the fans are sized for the budget (cfmPerKw), so ΔT = 3.16 × W / CFM.
+  // exhaust temperature: the fans are sized for the budget (cfmPerKw), and the sensible-heat
+  // rule ΔT(°F) = 3.16 × W / CFM is ΔT(°C) = 1.76 × W / CFM.
   function rackPower(rack, data) {
     const P = powerOf(data);
     const w = (rack.items || []).reduce((s, it) => s + watts(it), 0);
     const budget = (rack.powerKw || P.rackKw) * 1000;
     const util = budget ? w / budget : 0;
-    const dT = budget ? 3.16 * w / (P.cfmPerKw * budget / 1000) : 0;
+    const dT = budget ? 1.76 * w / (P.cfmPerKw * budget / 1000) : 0;
     return {
       w, budget, util, feedA: w / 2, feedB: w / 2,
       inletC: P.inletC, exhaustC: P.inletC + dT,

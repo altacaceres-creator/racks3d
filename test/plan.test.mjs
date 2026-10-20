@@ -68,6 +68,9 @@ test('power: watts follow the type and size, and can be overridden', () => {
   assert.ok(p.exhaustC > p.inletC);
   rack.powerKw = 1;
   assert.equal(P.rackPower(rack, {}).status, 'over');
+  // ΔT(°F) = 3.16 × W / CFM, in °C: a rack at its full 5 kW budget, fans at 120 CFM per kW → ≈ 14.7 °C over the inlet
+  const full = P.rackPower({ id: 'F', items: [{ kind: 'device', label: 'X', type: 'server', watts: 5000 }] }, {});
+  assert.ok(Math.abs(full.exhaustC - full.inletC - (3.16 * 5000 / 600) / 1.8) < 0.1, `ΔT ${full.exhaustC - full.inletC}`);
 });
 
 test('power: the sample has racks in every state but none over budget, and heat rises with load', () => {

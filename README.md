@@ -50,7 +50,8 @@ rack over its budget is flagged red, and one above 80 % amber; both appear in **
 
 The exhaust temperature is an **estimate**, not a measurement: the inlet is the cold-aisle temperature
 (`power.inletC`, 22 °C) and the fans are assumed to be sized for the budget (`power.cfmPerKw`, 120 CFM per
-kW), so ΔT = 3.16 × W ÷ CFM. It is enough to see which racks will run hot.
+kW), so ΔT (°C) = 1.76 × W ÷ CFM, the sensible-heat rule usually written ΔT (°F) = 3.16 × W ÷ CFM. A rack at
+its full budget runs about 15 °C over the inlet. It is enough to see which racks will run hot.
 
 | Power panel | Rack card |
 |---|---|

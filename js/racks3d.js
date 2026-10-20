@@ -58,7 +58,7 @@
   const PLAN = window.Racks3dPlan;
   const power = r => PLAN.rackPower(r, DATA);
   const kw = w => (w / 1000).toFixed(w < 10000 ? 2 : 1) + ' kW';
-  const HEAT = [[22, '#2f9bff'], [30, '#3ddc84'], [36, '#ffd23f'], [42, '#ff8a1f'], [48, '#ff4d5e']];
+  const HEAT = [[22, '#2f9bff'], [27, '#3ddc84'], [31, '#ffd23f'], [35, '#ff8a1f'], [40, '#ff4d5e']];
   function heatColor(t) {
     const c = new THREE.Color(HEAT[0][1]);
     for (let i = 1; i < HEAT.length; i++) {
@@ -2372,7 +2372,7 @@
         '<td>' + kw(p.feedA) + '</td><td>' + kw(p.feedB) + '</td><td>' + dot(p.exhaustC) + ' ' + Math.round(p.exhaustC) + ' °C</td></tr>').join('') +
       '</tbody></table></div>' +
       '<div class="legend"><span><i class="dot" style="background:var(--accent)"></i>Under 80 %</span><span><i class="dot" style="background:var(--new)"></i>80–100 %</span><span><i class="dot" style="background:var(--pending)"></i>Over budget: with 2N feeds, one feed alone could not carry the rack</span><span><i class="dot" style="background:#fff"></i>80 % mark</span></div>' +
-      '<p class="sub" style="margin-top:10px">The exhaust is an estimate, not a measurement: fans sized for the rack budget (' + powerOfData.cfmPerKw + ' CFM per kW), so ΔT = 3.16 × W ÷ CFM.</p>',
+      '<p class="sub" style="margin-top:10px">The exhaust is an estimate, not a measurement: fans sized for the rack budget (' + powerOfData.cfmPerKw + ' CFM per kW), so ΔT (°C) = 1.76 × W ÷ CFM, the usual 3.16 × W ÷ CFM in °F.</p>',
       e => { const tr = e.target.closest('[data-r]'); if (tr) { closeModal(); openRack(rackById[tr.dataset.r]); } });
   }
   const powerOfData = Object.assign({}, PLAN.POWER_DEFAULTS, DATA.power || {});
