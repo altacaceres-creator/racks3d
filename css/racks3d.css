@@ -272,9 +272,14 @@ kbd {
   font-size: 10px; text-align: center; line-height: 16px;
 }
 .steps li.link { padding: 0 0 0 26px; color: var(--muted); font-size: 11px; counter-increment: none; }
+.steps li[data-step] { cursor: pointer; border-radius: 6px; }
+.steps li[data-step]:hover { background: var(--panel-raised); }
+.steps li[data-step].on { background: rgba(255, 182, 0, .14); }
 .steps li.link::before { content: "│"; border: 0; background: none; color: var(--hover); }
 
 /* ---------- rack elevation */
+/* the layers do not apply inside a rack or a trace, and the rack list sits where they were */
+body[data-mode="rack"] #layers, body[data-mode="tour"] #layers, body[data-mode="trace"] #layers { display: none; }
 #elev {
   position: fixed;
   left: 10px;
@@ -420,6 +425,12 @@ kbd {
 }
 .ghost-label.add { color: var(--new); }
 .ghost-label.no { color: var(--muted); }
+/* a stop on a traced cable */
+.trace-label {
+  font-size: 11px; white-space: nowrap; color: #1a1300; background: var(--hover);
+  padding: 1px 6px; border-radius: 999px; box-shadow: 0 1px 4px #000a;
+}
+.trace-label.now { color: #0a0b1a; background: #fff; font-size: 12px; padding: 2px 8px; }
 .wall-label { font-size: 11px; color: var(--muted); white-space: nowrap; text-shadow: 0 1px 2px #000; }
 .portal-label { font-size: 13px; font-weight: 700; color: var(--accent); white-space: nowrap; text-shadow: 0 0 8px rgba(0, 155, 255, .6); }
 .dim-label {

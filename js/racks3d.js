@@ -1214,14 +1214,19 @@
 
   function applyVisibility() {
     const m = state.mode, L = state.layers, inRack = inRackMode(), isRow = m === 'row';
+    const tr = m === 'trace' ? trace : null;
     racks.forEach(r => {
       const o = rackObjs[r.id];
       o.group.visible = inRack ? r === state.rack : isRow ? r._row === state.row : true;
+      const touched = !tr || tr.racks.has(r);
+      o.bodyMat.transparent = !touched; o.bodyMat.opacity = touched ? 1 : 0.1; o.bodyMat.depthWrite = touched;
+      o.items.forEach(mesh => ghostItem(mesh, !!tr && !tr.items.has(mesh.userData.item)));
+      o.pdus.forEach(pm => { pm.visible = touched; });
       const focus = (m === 'walk' && walk.rack === r);
-      const doors = L.has('doors') && !inRack && !isRow && !focus;
+      const doors = L.has('doors') && !inRack && !isRow && !focus && !tr;
       o.doorF.visible = doors;
       o.doorR.visible = doors;
-      o.label.userData.show = L.has('labels') && !inRack && !isRow && ((m !== 'walk' && m !== 'aisle') || focus);
+      o.label.userData.show = L.has('labels') && !inRack && !isRow && ((m !== 'walk' && m !== 'aisle') || focus) && touched;
       if (o.overlay) o.overlay.visible = m === 'rack' && r === state.rack;
       if (o.gaps) o.gaps.visible = (inRack && r === state.rack) || focus;
       glow(r, focus);
@@ -1232,13 +1237,13 @@
     });
     doorMat.opacity = (m === 'aisle' || m === 'walk') ? 0.38 : 0.9;
     wallsGroup.visible = L.has('walls') && !inRack && !isRow;
-    heatGroup.visible = L.has('heat') && !inRack && !isRow;
+    heatGroup.visible = L.has('heat') && !inRack && !isRow && !tr;
     traysGroup.visible = L.has('trays') && !inRack && !isRow;
     const clip = inRack && state.rack ? rackBox(state.rack) : isRow && state.row ? rowBox(state.row) : null;
     CABLE_LAYERS.forEach(id => {
       const mesh = cableMeshes[id];
       if (!mesh) return;
-      mesh.visible = inRack ? true : L.has(id);
+      mesh.visible = tr ? false : inRack ? true : L.has(id);
       mesh.material.clippingPlanes = clip;
     });
     syncLabels();
@@ -1291,6 +1296,7 @@
     }
     if (tickWalk(dt)) anim = true;
     tickTour(dt);
+    tickTrace(dt);
     const ctl = studio.open ? studio.controls : controls;
     if (ctl && ctl.enabled && ctl.update()) anim = true;
     if (!needsRender && !anim) return;
@@ -1339,7 +1345,8 @@
   // ------------------------------------------------------------------ modes
   function snapshot() {
     return { mode: state.mode, rack: state.rack, row: state.row, face: state.face, aisle: state.aisle && Object.assign({}, state.aisle),
-      cam: camera.position.clone(), target: controls.target.clone(), fov: camera.fov, walkIdx: walk.idx, tourI: tour.i };
+      cam: camera.position.clone(), target: controls.target.clone(), fov: camera.fov, walkIdx: walk.idx, tourI: tour.i,
+      cable: trace.c, traceStep: trace.step, traceWhole: trace.whole };
   }
   function pushMode() { stack.push(snapshot()); }
 
@@ -1350,6 +1357,11 @@
       $('#elev').hidden = true;
     }
     if (prev === 'walk') { walk.active = false; walk.rack = null; if (doorPivot) doorPivot.rotation.y = 0; }
+    if (prev === 'trace') {
+      clearTraceGroup();
+      trace.c = null; trace.playing = false; trace.racks.clear(); trace.items.clear();
+      hideCard();
+    }
     $('#placard').hidden = true;
     $('#modebar').hidden = true;
     clearSel();
@@ -1392,7 +1404,16 @@
     } else if (mode === 'walk') {
       controls.enabled = false;
       startWalk(opt.walkIdx || 0, !!opt.paused);
+    } else if (mode === 'trace') {
+      trace.c = opt.cable; trace.steps = traceSteps(trace.c); trace.playing = false; trace.t = 0;
+      trace.step = Math.max(0, Math.min(trace.steps.length - 1, opt.step || 0)); trace.whole = !!opt.whole;
+      trace.steps.forEach(st => { if (st.E && st.E.rack) trace.racks.add(st.E.rack); if (st.E && st.E.item) trace.items.add(st.E.item); });
+      drawTrace();
+      traceBar();
+      showCableCard(trace.c);
+      cam = trace.whole ? wholeCam() : stepCam(trace.steps[trace.step]);
     }
+    document.body.dataset.mode = mode;
     applyVisibility();
     updateHint();
     $$('#views [data-act]').forEach(b => b.classList.toggle('on', (b.dataset.act === mode) || (b.dataset.act === 'aisle' && mode === 'aisle') || (b.dataset.act === 'tour' && mode === 'tour')));
@@ -1406,7 +1427,6 @@
     if (!$('#studio').hidden) return closeStudio();
     if (!$('#modal').hidden) return closeModal();
     if (!$('#results').hidden) return hideResults();
-    if (state.trace) return clearTrace();
     const s = stack.pop();
     if (!s) {
       if (state.mode !== 'room') setMode('room');
@@ -1414,7 +1434,7 @@
       return;
     }
     hideCard();
-    setMode(s.mode, { rack: s.rack, row: s.row, face: s.face, aisle: s.aisle, walkIdx: s.walkIdx, tourI: s.tourI, paused: true, restore: s });
+    setMode(s.mode, { rack: s.rack, row: s.row, face: s.face, aisle: s.aisle, walkIdx: s.walkIdx, tourI: s.tourI, paused: true, restore: s, cable: s.cable, step: s.traceStep, whole: s.traceWhole });
   }
   function goRoom() { stack.length = 0; setMode('room'); }
 
@@ -1723,26 +1743,131 @@
     invalidate();
   }
 
-  let traceGroup = null;
-  const traceMat = new THREE.MeshBasicMaterial({ color: C.hover, transparent: true, opacity: 0.95 });
-  function clearTrace() {
-    if (traceGroup) { traceGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); }); scene.remove(traceGroup); traceGroup = null; }
-    state.trace = null;
+  // ------------------------------------------------------------------ trace: a walk along a cable, stop by stop
+  // The trace has a view of its own. Every rack stays in place; racks and items the cable
+  // does not touch fade to glass, and the camera goes from one end of the cable to the other
+  // one stop at a time (device, panel port, panel port, … device), or stands back to show
+  // the whole path in the room.
+  const trace = { c: null, steps: [], step: 0, whole: false, playing: false, t: 0, group: null, racks: new Set(), items: new Set() };
+  const TRACE_DWELL = 2.8;
+  const traceMats = {
+    done: new THREE.MeshBasicMaterial({ color: C.hover }),
+    now: new THREE.MeshBasicMaterial({ color: 0xffffff }),
+    next: new THREE.MeshBasicMaterial({ color: 0x8a8fc0, transparent: true, opacity: 0.3, depthWrite: false }),
+    // the walked part also shows through racks, faintly, so it never disappears behind them
+    xray: new THREE.MeshBasicMaterial({ color: C.hover, transparent: true, opacity: 0.3, depthTest: false, depthWrite: false }),
+  };
+  const ghostMat = new THREE.MeshBasicMaterial({ color: 0x9aa0d0, transparent: true, opacity: 0.06, depthWrite: false });
+  const GHOST = [ghostMat, ghostMat, ghostMat, ghostMat, ghostMat, ghostMat];
+  function ghostItem(mesh, on) {
+    if (on && !mesh.userData.real) { mesh.userData.real = mesh.material; mesh.material = GHOST; }
+    else if (!on && mesh.userData.real) { mesh.material = mesh.userData.real; mesh.userData.real = null; }
+  }
+  function linkText(c, pc) {
+    let what;
+    if (pc.type === 'patch') what = pc.cross ? 'cross-connect (patch cord)' : 'patch cord';
+    else if (pc.trunk) what = pc.trunk.interRow ? 'inter-row trunk' : (extById[pc.trunk.b] ? 'exit trunk' : 'trunk (' + (pc.trunk.medium === 'copper' ? 'copper' : 'MPO') + ')');
+    else what = c.kind === 'active' ? 'active cable through the tray' : 'cable run through the tray';
+    return what + ' · ≈ ' + polyLen(pc.pts).toFixed(1) + ' m';
+  }
+  // One stop per end and per panel port: where it is in the room and the link that leaves it.
+  function traceSteps(c) {
+    const refs = [c.a].concat(c.hops, [c.b]), P = c._pieces || [];
+    if (!P.length || P.length !== refs.length - 1) return [];
+    return refs.map((ref, i) => {
+      const last = i === P.length, pc = last ? P[i - 1] : P[i];
+      return { ref, E: last ? pc.Q : pc.P, at: last ? pc.pts[pc.pts.length - 1] : pc.pts[0], text: endpointText(ref), link: last ? null : linkText(c, pc) };
+    });
+  }
+  // Stand in front of (or behind) the rack the stop is in, a little to the side, looking at the port.
+  function stepCam(st) {
+    const p = st.at, E = st.E;
+    if (E && E.rack) {
+      const r = E.rack, lx = (p.x - r._x) * r._sgn, lz = (p.z - r._front) * r._sgn, front = lz > -r.d / 2;
+      return { pos: toW(r, v(lx * 0.4 + (front ? 0.45 : -0.45), Math.min(RH + 0.3, p.y + 0.4), front ? 1.4 : -r.d - 1.4)), target: p.clone(), fov: 50 };
+    }
+    const to = v((X0 + X1) / 2 - p.x, 0, (RZ0 + RZ1) / 2 - p.z).normalize();
+    return { pos: p.clone().addScaledVector(to, 1.8).add(v(0, 0.3, 0)), target: p.clone(), fov: 50 };
+  }
+  function wholeCam() {
+    const box = new THREE.Box3();
+    trace.c._pieces.forEach(pc => pc.pts.forEach(q => box.expandByPoint(q)));
+    const ctr = box.getCenter(v(0, 0, 0)), size = box.getSize(v(0, 0, 0)), R = Math.max(size.x, size.z, 2.5);
+    const k = Math.max(1, 1.4 / Math.max(0.5, camera.aspect));
+    return { pos: v(ctr.x - R * 0.3 * k, ctr.y + (R * 0.75 + 1.6) * k, ctr.z + (R * 0.85 + 1.4) * k), target: ctr.setY(1), fov: 45 };
+  }
+  // labels are DOM elements the label renderer does not remove on its own
+  function clearTraceGroup() {
+    if (!trace.group) return;
+    trace.group.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.isCSS2DObject && o.element) o.element.remove(); });
+    scene.remove(trace.group);
+    trace.group = null;
+  }
+  function drawTrace() {
+    clearTraceGroup();
+    const g = trace.group = new THREE.Group(), c = trace.c;
+    c._pieces.forEach((pc, i) => {
+      const kind = trace.whole || i < trace.step ? 'done' : i === trace.step ? 'now' : 'next';
+      const base = pc.trunk ? (TRUNK_R[trunkLayer(pc.trunk)] || 0.008) : 0.0045;
+      const pts = rounded(pc.pts, pc.type === 'patch' ? 0.025 : 0.06);
+      g.add(new THREE.Mesh(tubeGeo(pts, base + (kind === 'now' ? 0.008 : 0.004), 8), traceMats[kind]));
+      if (kind !== 'next') { const x = new THREE.Mesh(tubeGeo(pts, base + 0.003, 6), traceMats.xray); x.renderOrder = 15; g.add(x); }
+    });
+    trace.steps.forEach((st, i) => {
+      const cur = !trace.whole && i === trace.step, seen = trace.whole || i <= trace.step;
+      const m = new THREE.Mesh(new THREE.SphereGeometry(cur ? 0.028 : 0.016, 14, 10), cur ? traceMats.now : seen ? traceMats.done : traceMats.next);
+      m.position.copy(st.at);
+      g.add(m);
+      if (trace.whole || cur) {
+        const lab = css2d('<b>' + (i + 1) + '</b>' + (cur ? ' ' + esc(st.text.t) : ''), 'trace-label' + (cur ? ' now' : ''));
+        lab.position.copy(st.at).add(v(0, 0.06, 0));
+        g.add(lab);
+      }
+    });
+    scene.add(g);
     invalidate();
   }
-  function traceCable(c) {
-    clearTrace();
-    traceGroup = new THREE.Group();
-    (c._pieces || []).forEach(pc => {
-      const r = pc.trunk ? (TRUNK_R[trunkLayer(pc.trunk)] || 0.008) + 0.004 : 0.0065;
-      traceGroup.add(new THREE.Mesh(tubeGeo(rounded(pc.pts, pc.type === 'patch' ? 0.025 : 0.06), r, 8), traceMat));
-    });
-    const ends = c._pieces.length ? [c._pieces[0].pts[0], c._pieces[c._pieces.length - 1].pts.slice(-1)[0]] : [];
-    ends.forEach(p => { const s = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 8), traceMat); s.position.copy(p); traceGroup.add(s); });
-    scene.add(traceGroup);
-    state.trace = c;
-    showCableCard(c);
-    invalidate();
+  function openTrace(c, opt) {
+    if (!(c._pieces || []).length) return showCableCard(c, true);
+    if (studio.open) closeStudio();
+    if (state.mode !== 'trace') pushMode();
+    setMode('trace', Object.assign({ cable: c, step: 0 }, opt || {}));
+  }
+  const traceCable = c => openTrace(c);
+  function traceGo(i, whole) {
+    trace.step = Math.max(0, Math.min(trace.steps.length - 1, i));
+    trace.whole = !!whole;
+    trace.t = 0;
+    drawTrace();
+    traceBar();
+    showCableCard(trace.c);
+    const cam = trace.whole ? wholeCam() : stepCam(trace.steps[trace.step]);
+    flyTo(cam.pos, cam.target, cam.fov, 900);
+  }
+  function tickTrace(dt) {
+    if (state.mode !== 'trace' || !trace.playing) return;
+    trace.t += dt;
+    if (trace.t < TRACE_DWELL) return;
+    if (trace.step >= trace.steps.length - 1) { trace.playing = false; traceGo(trace.step, true); return; }
+    traceGo(trace.step + 1);
+  }
+  function traceBar() {
+    const n = trace.steps.length, st = trace.steps[trace.step];
+    const b = bar('<button class="btn" data-k="prev" title="Previous stop (←)">‹</button>' +
+      '<button class="btn" data-k="play">' + (trace.playing ? '❚❚ Pause' : '▶ Walk it') + '</button>' +
+      '<button class="btn" data-k="next" title="Next stop (→)">›</button>' +
+      '<span class="title">' + (trace.whole ? esc('Cable ' + trace.c.id + ' · whole path, ' + n + ' stops') : 'Stop ' + (trace.step + 1) + ' / ' + n + ' · ' + esc(st.text.t)) + '</span>' +
+      '<button class="btn' + (trace.whole ? ' on' : '') + '" data-k="whole">Whole path in the room</button>' +
+      '<button class="btn" data-k="back">Exit <kbd>Esc</kbd></button>');
+    b.onclick = e => {
+      const t = e.target.closest('button');
+      if (!t) return;
+      if (t.dataset.k === 'prev') { trace.playing = false; traceGo(trace.whole ? 0 : trace.step - 1); }
+      else if (t.dataset.k === 'next') { trace.playing = false; traceGo(trace.whole ? 0 : trace.step + 1); }
+      else if (t.dataset.k === 'play') { trace.playing = !trace.playing; if (trace.playing && (trace.whole || trace.step >= n - 1)) traceGo(0); else traceBar(); }
+      else if (t.dataset.k === 'whole') { trace.playing = false; traceGo(trace.step, !trace.whole); }
+      else if (t.dataset.k === 'back') back();
+    };
   }
 
   // ------------------------------------------------------------------ cards
@@ -1764,7 +1889,9 @@
   }
   function hideCard() { $('#card').hidden = true; }
   $('#card').addEventListener('click', e => {
-    if (e.target.closest('[data-close-card]')) { hideCard(); clearTrace(); return; }
+    if (e.target.closest('[data-close-card]')) { if (state.mode === 'trace') back(); else hideCard(); return; }
+    const st = e.target.closest('[data-step]');
+    if (st && state.mode === 'trace') { trace.playing = false; traceGo(+st.dataset.step); return; }
     const ca = e.target.closest('[data-ca]');
     if (ca) { const a = cardActions[+ca.dataset.ca]; if (a) a[1](); return; }
     const fr = e.target.closest('[data-fit]');
@@ -1838,32 +1965,20 @@
     }
     showCard({ badge: 'Port', badgeCls: 'free', title: (it.kind === 'device' ? it.label : it._rack.id + ' ' + it.id) + ' · ' + p.name, rows: [['Status', '<span style="color:var(--free)">Free</span>'], ['Rack', esc(it._rack.id)]], note: SOURCE, actions: [['Item details', () => showItemCard(it)]] });
   }
-  function showCableCard(c) {
-    const pts = [c.a].concat(c.hops, [c.b]);
-    let steps = '';
-    pts.forEach((ref, i) => {
-      const e = endpointText(ref);
-      steps += '<li><b>' + esc(e.t) + '</b><br><small style="color:var(--muted)">' + esc(e.sub) + '</small></li>';
-      const pc = c._pieces[i];
-      if (i < pts.length - 1) {
-        let what = 'link';
-        if (pc) {
-          if (pc.type === 'patch') what = pc.cross ? 'cross-connect (patch cord)' : 'patch cord';
-          else if (pc.trunk) what = pc.trunk.interRow ? 'inter-row trunk' : (extById[pc.trunk.b] ? 'exit trunk' : 'trunk (' + (pc.trunk.medium === 'copper' ? 'copper' : 'MPO') + ')');
-          else what = c.kind === 'active' ? 'active cable through the tray' : 'cable run through the tray';
-          what += ' · ≈ ' + polyLen(pc.pts).toFixed(1) + ' m';
-        }
-        steps += '<li class="link">' + esc(what) + '</li>';
-      }
-    });
-    const acts = [['Clear trace', clearTrace]];
-    if (state.mode !== 'room') acts.push(['See the whole path in the room', () => { const c2 = state.trace; goRoom(); if (c2) traceCable(c2); }]);
+  function showCableCard(c, broken) {
+    const live = state.mode === 'trace' && trace.c === c;
+    const steps = (live ? trace.steps : traceSteps(c)).map((st, i) =>
+      '<li data-step="' + i + '" class="' + (live && (trace.whole || i === trace.step) ? 'on' : '') + '"><b>' + esc(st.text.t) + '</b><br><small style="color:var(--muted)">' + esc(st.text.sub) + '</small></li>' +
+      (st.link ? '<li class="link">' + esc(st.link) + '</li>' : '')).join('');
     showCard({
       badge: MEDIUM_NAME[c.medium] || c.medium, badgeCls: '',
       extraBadges: ' <span class="badge ' + (c.status === 'pending' ? 'pending' : c.status === 'proposed' ? 'new' : 'mute') + '">' + esc(c.status) + '</span>',
       title: 'Cable ' + c.id,
       rows: [['Kind', esc(KIND_NAME[c.kind] || c.kind)], ['From', esc(c.a.item + ' · ' + c.a.port)], ['To', esc(c.b.item + ' · ' + c.b.port)], ['Length', '≈ ' + (c._len || 0).toFixed(1) + ' m'], ['Panel hops', c.hops.length]],
-      html: '<h4>Path</h4><ol class="steps">' + steps + '</ol>', note: c.note || SOURCE, actions: acts,
+      html: broken ? '<p class="note-line bad">This cable has an end or a hop that is not in the model, so it cannot be drawn.</p>'
+        : '<h4>Path · ' + (live ? 'click a stop to go there' : '') + '</h4><ol class="steps">' + steps + '</ol>',
+      note: c.note || SOURCE,
+      actions: live ? [] : [['Trace it', () => openTrace(c)]],
     });
   }
   function showExtCard(e) {
@@ -2578,6 +2693,7 @@
       aisle: '<kbd>←</kbd><kbd>→</kbd> walk along the aisle · <kbd>Esc</kbd> back',
       walk: '<kbd>Space</kbd> pause · <kbd>←</kbd><kbd>→</kbd> previous / next rack · <kbd>Esc</kbd> exit',
       tour: '<kbd>Space</kbd> pause · <kbd>←</kbd><kbd>→</kbd> previous / next rack · <kbd>Esc</kbd> exit',
+      trace: '<kbd>←</kbd><kbd>→</kbd> stop by stop · <kbd>Space</kbd> walk it · <kbd>Esc</kbd> exit',
     };
     $('#hint').innerHTML = h[state.mode] || '';
   }
@@ -2598,6 +2714,9 @@
     } else if (m === 'walk') {
       if (e.key === ' ') { e.preventDefault(); walk.paused = !walk.paused; walkBar(); }
       else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); walkJump(e.key === 'ArrowRight' ? 1 : -1); }
+    } else if (m === 'trace') {
+      if (e.key === ' ') { e.preventDefault(); $('#modebar [data-k="play"]').click(); }
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); $('#modebar [data-k="' + (e.key === 'ArrowRight' ? 'next' : 'prev') + '"]').click(); }
     } else if (m === 'tour') {
       if (e.key === ' ') { e.preventDefault(); tour.paused = !tour.paused; tourBar(); }
       else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); tourGo(tour.i + (e.key === 'ArrowRight' ? 1 : -1)); }
@@ -2619,6 +2738,7 @@
     invalidate();
   });
   document.addEventListener('visibilitychange', invalidate);
+  document.body.dataset.mode = state.mode;
 
   // ------------------------------------------------------------------ start
   renderLayers();
