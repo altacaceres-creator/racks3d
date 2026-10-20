@@ -138,6 +138,9 @@ by the validation, and the power, fit, route and CSV helpers on small hand-made 
    **Save**.
 3. After a minute the site is at `https://<user>.github.io/racks3d/`. Put that link in the repository's
    **About** box so visitors find it.
+4. After each update, raise the `?v=` number on the CSS and script links in `index.html`. Browsers keep
+   old copies of those files for a while; a new number makes them fetch the new ones together with the
+   new page.
 
 ## Files
 

@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>racks3d · data hall digital twin</title>
 <meta name="description" content="Static 3D digital twin of a data hall: racks, patch panels, star centers, trunks and cables. Fictitious sample data.">
-<link rel="stylesheet" href="css/racks3d.css">
+<!-- ?v= makes browsers fetch the new files after an update: raise it whenever css/ js/ or data/ change -->
+<link rel="stylesheet" href="css/racks3d.css?v=6">
 </head>
 <body>
 <div id="stage"></div>
@@ -81,13 +82,13 @@
 <script src="js/vendor/CSS2DRenderer.js"></script>
 <script src="js/vendor/RoomEnvironment.js"></script>
 <script src="js/vendor/BufferGeometryUtils.js"></script>
-<script src="data/sample-data.js"></script>
+<script src="data/sample-data.js?v=6"></script>
 <script>
   // Optional private data, never committed: open index.html?data=private
   if (/[?&]data=private\b/.test(location.search)) document.write('<script src="data/private-data.js"><\/script>');
 </script>
-<script src="js/import.js"></script>
-<script src="js/plan.js"></script>
-<script src="js/racks3d.js"></script>
+<script src="js/import.js?v=6"></script>
+<script src="js/plan.js?v=6"></script>
+<script src="js/racks3d.js?v=6"></script>
 </body>
 </html>
